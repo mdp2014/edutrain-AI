@@ -148,12 +148,23 @@ export async function recordAttempt(attempt: Attempt): Promise<void> {
 }
 
 /**
- * Get available exercise bank
+ * Get available exercise bank with optional difficulty filtering
  */
 export async function getExercises(
   subject?: Subject,
-  skill?: string
+  skill?: string,
+  difficulty?: Difficulty
 ): Promise<ExerciseItem[]> {
+  const matches = INITIAL_EXERCISES.filter((ex) => {
+    if (subject && ex.subject !== subject) return false;
+    if (skill && ex.skill !== skill) return false;
+    if (difficulty && ex.difficulty !== difficulty) return false;
+    return true;
+  });
+
+  if (matches.length > 0) return matches;
+
+  // Fallback ignoring difficulty if none matched exactly
   return INITIAL_EXERCISES.filter((ex) => {
     if (subject && ex.subject !== subject) return false;
     if (skill && ex.skill !== skill) return false;

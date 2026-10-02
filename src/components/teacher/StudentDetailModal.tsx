@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { UserProfile, Attempt, StudentProgress, TeacherReport, ExerciseItem } from '../../types';
+import { UserProfile, Attempt, StudentProgress, TeacherReport, ExerciseItem, Subject, Difficulty } from '../../types';
+import { CM2_SUBJECTS } from '../../lib/constants';
 import {
   getStudentAttempts,
   getStudentProgress,
@@ -117,25 +118,64 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
     setIsGeneratingSeries(true);
     setSeriesSuccessMsg(null);
     try {
-      // Find weakest skills
-      const sortedSkills = [...progress].sort((a, b) => a.score - b.score);
-      const primaryWeak = sortedSkills[0]?.skill || 'Fractions';
-      const weakSubject = sortedSkills[0]?.subject || 'Mathématiques';
-      const targetScore = sortedSkills[0]?.score || 60;
+      // 1. Check for genuine weak skills (< 75%)
+      const realWeakSkills = progress.filter((p) => p.score < 75).sort((a, b) => a.score - b.score);
+      let targetSkill = '';
+      let targetSubject: Subject = 'Mathématiques';
+      let targetScore = 70;
+      let targetDifficulty: Difficulty = 'moyen';
+
+      if (realWeakSkills.length > 0) {
+        // Target weakest skill to reinforce
+        targetSkill = realWeakSkills[0].skill;
+        targetSubject = realWeakSkills[0].subject as Subject;
+        targetScore = realWeakSkills[0].score;
+        targetDifficulty = targetScore < 60 ? 'facile' : 'moyen';
+      } else if (progress.length > 0) {
+        // All attempted skills are mastered (e.g. Fractions 100%)
+        // Check for an unpracticed curriculum skill or challenge with advanced difficulty
+        const practiced = new Set(progress.map((p) => p.skill));
+        const unpracticed: { skill: string; subject: Subject }[] = [];
+        (['Mathématiques', 'Français'] as Subject[]).forEach((subj) => {
+          CM2_SUBJECTS[subj].skills.forEach((sk) => {
+            if (!practiced.has(sk.name)) unpracticed.push({ skill: sk.name, subject: subj });
+          });
+        });
+
+        if (unpracticed.length > 0) {
+          targetSkill = unpracticed[0].skill;
+          targetSubject = unpracticed[0].subject;
+          targetScore = 75;
+          targetDifficulty = 'moyen';
+        } else {
+          // All skills mastered: challenge with advanced difficulty
+          targetSkill = progress[0].skill;
+          targetSubject = progress[0].subject as Subject;
+          targetScore = progress[0].score;
+          targetDifficulty = 'difficile';
+        }
+      } else {
+        targetSkill = 'Fractions';
+        targetSubject = 'Mathématiques';
+        targetScore = 70;
+        targetDifficulty = 'moyen';
+      }
 
       const exercises = await callGeminiGenerateExercises({
         studentName: `${student.firstName} ${student.lastName}`,
         studentId: student.id,
-        subject: weakSubject,
-        skill: primaryWeak,
-        difficulty: targetScore < 60 ? 'facile' : 'moyen',
+        subject: targetSubject,
+        skill: targetSkill,
+        difficulty: targetDifficulty,
         count: 5,
         accuracy: targetScore,
         recentErrors: recentErrors.map((e) => e.question).slice(0, 4),
       });
 
       setGeneratedSeries(exercises);
-      setSeriesSuccessMsg(`Série de ${exercises.length} exercices personnalisés générée et enregistrée dans le compte de ${student.firstName} !`);
+      setSeriesSuccessMsg(
+        `Série de ${exercises.length} exercices personnalisés (${targetDifficulty === 'difficile' ? 'niveau défi / approfondissement' : targetDifficulty === 'facile' ? 'niveau remédiation' : 'niveau standard CM2'}) en ${targetSkill} générée avec succès pour ${student.firstName} !`
+      );
     } catch (err) {
       console.error(err);
       alert('Erreur lors de la génération de la série.');
@@ -430,62 +470,124 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
           )}
 
           {/* Section: Compétences (Section 15) */}
-          <div>
-            <h3 className="text-base font-extrabold text-slate-800 mb-3">
-              Maîtrise des compétences CM2
+          <div className="space-y-4">
+            <h3 className="text-base font-extrabold text-slate-800">
+              Analyse des compétences CM2
             </h3>
             {progress.length === 0 ? (
               <div className="p-5 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-500 text-center">
                 Cet élève n'a pas encore réalisé d'exercices. Les résultats s'afficheront dès qu'il aura répondu à ses premières questions.
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {progress.map((prog) => {
-                  const isHigh = prog.score >= 80;
-                  const isMid = prog.score >= 60 && prog.score < 80;
-
-                  return (
-                    <div
-                      key={prog.id}
-                      className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200"
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-bold text-slate-800">
-                          {prog.skill} ({prog.subject})
-                        </span>
-                        <span
-                          className={`text-xs font-extrabold px-2 py-0.5 rounded-md ${
-                            isHigh
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : isMid
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-rose-100 text-rose-800'
-                          }`}
-                        >
-                          {prog.score} %
-                        </span>
-                      </div>
-
-                      <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden mb-1.5">
-                        <div
-                          className={`h-2 rounded-full ${
-                            isHigh
-                              ? 'bg-emerald-500'
-                              : isMid
-                              ? 'bg-amber-500'
-                              : 'bg-rose-500'
-                          }`}
-                          style={{ width: `${prog.score}%` }}
-                        />
-                      </div>
-
-                      <div className="flex justify-between text-[11px] text-slate-400">
-                        <span>Niveau : {prog.level}</span>
-                        <span>{prog.correctAttempts} / {prog.totalAttempts} réussites</span>
-                      </div>
+              <div className="space-y-4">
+                {/* 1. Points forts maîtrisés */}
+                {progress.filter((p) => p.score >= 75).length > 0 && (
+                  <div className="p-4 rounded-2xl bg-emerald-50/50 border border-emerald-200 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-extrabold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        <span>Points forts & Compétences acquises (≥ 75 %)</span>
+                      </h4>
+                      <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
+                        {progress.filter((p) => p.score >= 75).length} compétence(s) maîtrisée(s)
+                      </span>
                     </div>
-                  );
-                })}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {progress
+                        .filter((p) => p.score >= 75)
+                        .map((prog) => (
+                          <div
+                            key={prog.id}
+                            className="p-3.5 rounded-xl bg-white border border-emerald-200 shadow-2xs"
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-xs font-bold text-slate-800">
+                                {prog.skill} ({prog.subject})
+                              </span>
+                              <span className="text-xs font-extrabold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800">
+                                {prog.score} % {prog.score === 100 ? '⭐' : ''}
+                              </span>
+                            </div>
+
+                            <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden mb-1.5">
+                              <div
+                                className="h-2 rounded-full bg-emerald-500"
+                                style={{ width: `${prog.score}%` }}
+                              />
+                            </div>
+
+                            <div className="flex justify-between text-[11px] text-slate-400">
+                              <span>Niveau : {prog.level} (Acquis)</span>
+                              <span>{prog.correctAttempts} / {prog.totalAttempts} réussites</span>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. Compétences à renforcer (< 75%) */}
+                {progress.filter((p) => p.score < 75).length > 0 ? (
+                  <div className="p-4 rounded-2xl bg-amber-50/50 border border-amber-200 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-extrabold text-amber-800 uppercase tracking-wider flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 text-amber-600" />
+                        <span>Compétences à consolider (&lt; 75 %)</span>
+                      </h4>
+                      <span className="text-[11px] font-bold text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-full">
+                        {progress.filter((p) => p.score < 75).length} compétence(s) à renforcer
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {progress
+                        .filter((p) => p.score < 75)
+                        .map((prog) => (
+                          <div
+                            key={prog.id}
+                            className="p-3.5 rounded-xl bg-white border border-amber-200 shadow-2xs"
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-xs font-bold text-slate-800">
+                                {prog.skill} ({prog.subject})
+                              </span>
+                              <span
+                                className={`text-xs font-extrabold px-2 py-0.5 rounded-md ${
+                                  prog.score < 60
+                                    ? 'bg-rose-100 text-rose-800'
+                                    : 'bg-amber-100 text-amber-800'
+                                }`}
+                              >
+                                {prog.score} %
+                              </span>
+                            </div>
+
+                            <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden mb-1.5">
+                              <div
+                                className={`h-2 rounded-full ${
+                                  prog.score < 60 ? 'bg-rose-500' : 'bg-amber-500'
+                                }`}
+                                style={{ width: `${prog.score}%` }}
+                              />
+                            </div>
+
+                            <div className="flex justify-between text-[11px] text-slate-400">
+                              <span>Niveau : {prog.level} (En cours)</span>
+                              <span>{prog.correctAttempts} / {prog.totalAttempts} réussites</span>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>
+                      <strong>Remarquable :</strong> Aucune compétence faible détectée ! L'élève a réussi l'intégralité des exercices sur les notions évaluées.
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>

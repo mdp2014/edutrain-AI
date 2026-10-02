@@ -137,29 +137,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const cleanFirst = firstName.trim();
     const cleanLast = lastName.trim();
-    const sanitize = (s: string) =>
-      s
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9]/g, '');
-    const email = `${sanitize(cleanFirst)}.${sanitize(cleanLast)}@cm2.edutrain.fr`;
-    const studentId = `student-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
 
-    const newStudentProfile: UserProfile = {
-      id: studentId,
-      firstName: cleanFirst,
-      lastName: cleanLast,
-      email,
-      role: 'student',
-      classId: 'class-cm2',
-      className: 'CM2',
-      createdAt: new Date().toISOString(),
-    };
-
-    let serverSuccess = false;
-
-    // 1. Post to Server API
+    // 1. Post to Server API (single authoritative creation)
     try {
       const response = await fetch('/api/auth/register', {
         method: 'POST',
@@ -175,31 +154,70 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (response.ok && data.success && data.user) {
         setUser(data.user);
         localStorage.setItem('edutrain_active_user', JSON.stringify(data.user));
-        serverSuccess = true;
+        return { success: true };
+      } else {
+        return {
+          success: false,
+          error: data.error || 'Erreur lors de la création du compte.',
+        };
       }
     } catch (apiErr) {
-      console.warn('Server registration notice:', apiErr);
+      console.warn('Server registration offline/network error, checking Firestore fallback...', apiErr);
     }
 
-    // 2. Write directly to Firestore to guarantee persistence
+    // 2. Fallback ONLY if the server API failed to respond / network offline
     try {
-      await setDoc(doc(db, 'users', newStudentProfile.id), {
+      const sanitize = (s: string) =>
+        s
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-z0-9]/g, '');
+      const email = `${sanitize(cleanFirst)}.${sanitize(cleanLast)}@cm2.edutrain.fr`;
+      const cleanFullName = `${cleanFirst} ${cleanLast}`.toLowerCase();
+
+      // Check if already in Firestore to prevent duplicate
+      const snap = await getDocs(query(collection(db, 'users'), where('role', '==', 'student')));
+      let alreadyExists = false;
+      snap.forEach((d) => {
+        const data = d.data();
+        if (`${data.firstName || ''} ${data.lastName || ''}`.toLowerCase().trim() === cleanFullName) {
+          alreadyExists = true;
+        }
+      });
+
+      if (alreadyExists) {
+        return {
+          success: false,
+          error: 'Un compte avec ce prénom et ce nom existe déjà. Veuillez vous connecter.',
+        };
+      }
+
+      const fallbackId = `student-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+      const newStudentProfile: UserProfile = {
+        id: fallbackId,
+        firstName: cleanFirst,
+        lastName: cleanLast,
+        email,
+        role: 'student',
+        classId: 'class-cm2',
+        className: 'CM2',
+        createdAt: new Date().toISOString(),
+      };
+
+      await setDoc(doc(db, 'users', fallbackId), {
         ...newStudentProfile,
         fullName: `${cleanFirst} ${cleanLast}`,
         password: pass,
       });
-      console.log('[Auth] User registered directly in Firestore:', newStudentProfile.id);
-    } catch (fsErr) {
-      console.warn('Firestore direct write notice:', fsErr);
-    }
 
-    // If server didn't set user, set it locally from profile
-    if (!serverSuccess) {
       setUser(newStudentProfile);
       localStorage.setItem('edutrain_active_user', JSON.stringify(newStudentProfile));
+      return { success: true };
+    } catch (fsErr: any) {
+      console.error('Firestore direct registration error:', fsErr);
+      return { success: false, error: "Erreur réseau lors de l'inscription." };
     }
-
-    return { success: true };
   };
 
   const updateUserPassword = async (newPass: string): Promise<{ success: boolean; error?: string }> => {

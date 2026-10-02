@@ -21,6 +21,7 @@ export const AuthPage: React.FC = () => {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setError(null);
     setSuccessMsg(null);
     if (!identifier.trim() || !password) {
@@ -39,6 +40,7 @@ export const AuthPage: React.FC = () => {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setError(null);
     setSuccessMsg(null);
 

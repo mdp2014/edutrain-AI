@@ -242,7 +242,25 @@ app.post('/api/auth/register', async (req, res) => {
           u.lastName.toLowerCase() === cleanLast.toLowerCase())
     );
 
-    if (existing) {
+    // Also check Firestore for duplicate names
+    let existsInFirestore = false;
+    try {
+      const snap = await getDocs(query(collection(firestoreDb, 'users'), where('role', '==', 'student')));
+      snap.forEach((d) => {
+        const data = d.data();
+        const sameEmail = (data.email || '').toLowerCase() === email.toLowerCase();
+        const sameName =
+          (data.firstName || '').toLowerCase() === cleanFirst.toLowerCase() &&
+          (data.lastName || '').toLowerCase() === cleanLast.toLowerCase();
+        if (sameEmail || sameName) {
+          existsInFirestore = true;
+        }
+      });
+    } catch (e) {
+      console.warn('Notice checking duplicate in Firestore:', e);
+    }
+
+    if (existing || existsInFirestore) {
       return res.status(400).json({
         success: false,
         error: 'Un compte avec ce prénom et ce nom existe déjà. Veuillez vous connecter.',
@@ -682,6 +700,32 @@ app.post('/api/generate-exercises', async (req, res) => {
     recentErrors = [],
   } = req.body;
 
+  let difficultyGuidelines = '';
+  if (difficulty === 'difficile') {
+    difficultyGuidelines = `
+EXIGENCE STRICTE - NIVEAU DIFFICILE (Approfondissement & Défi pour élève très performant avec >= 85% de réussite) :
+- L'élève maîtrise déjà les bases fondamentales. Il ne faut SURTOUT PAS lui poser de questions simplistes ou évidentes (comme reconnaître 1/2 ou 3/4).
+- Propose des exercices stimulants de fin de CM2 / Cycle 3 :
+  * Fractions supérieures à 1 (ex: 7/4 = 1 + 3/4)
+  * Encadrement d'une fraction entre deux nombres entiers consécutifs (ex: 2 < 7/3 < 3)
+  * Écritures fractionnaires et fractions décimales (ex: 15/10 = 1,5 = 1 + 5/10)
+  * Additions de fractions simples de même dénominateur ou de dénominateurs multiples (ex: 1/2 + 1/4 = 3/4)
+  * Problèmes de partage ou de proportionnalité à plusieurs étapes logiques.`;
+  } else if (difficulty === 'facile') {
+    difficultyGuidelines = `
+EXIGENCE STRICTE - NIVEAU FACILE (Remédiation bienveillante pour élève en difficulté avec < 60% de réussite) :
+- L'élève a besoin de consolider les bases sans se décourager.
+- Propose des questions très claires, visuelles et accessibles :
+  * Vocabulaire fondamental (numérateur = parts prises, dénominateur = parts totales)
+  * Fractions usuelles simples (1/2, 1/4, 3/4) avec références familières (parts de gâteau, pizza, segments)
+  * Évite les calculs lourds ou les énoncés longs.`;
+  } else {
+    difficultyGuidelines = `
+EXIGENCE STRICTE - NIVEAU MOYEN (Consolidation standard de niveau CM2 pour réussite entre 60% et 84%) :
+- Exercices équilibrés correspondant au niveau moyen attendu en cours d'année de CM2.
+- Comparaison de fractions simples, fractions sur droite graduée, équivalences simples (2/4 = 1/2).`;
+  }
+
   const prompt = `
 Tu es un concepteur pédagogique expert de l'école primaire française, spécialisé dans le niveau CM2 (enfants de 10-11 ans).
 Tu dois créer une série de ${count} exercices personnalisés pour l'élève "${studentName}".
@@ -690,15 +734,17 @@ Paramètres de l'élève :
 - Classe : CM2 (France)
 - Matière : ${subject}
 - Compétence ciblée : ${skill}
-- Taux de réussite actuel : ${accuracy}%
-- Niveau de difficulté : ${difficulty}
-- Dernières erreurs observées chez cet élève : ${JSON.stringify(recentErrors)}
+- Taux de réussite évalué : ${accuracy}%
+- Niveau de difficulté ciblé : ${difficulty}
+- Dernières erreurs de l'élève : ${JSON.stringify(recentErrors)}
+
+${difficultyGuidelines}
 
 Consignes strictes :
-1. Les exercices doivent correspondre rigoureusement aux attendus de fin de cycle 3 / CM2 en France.
+1. Les exercices doivent correspondre rigoureusement aux attendus du cycle 3 / CM2 en France.
 2. Énoncés clairs, bienveillants et motivants pour un enfant de 10-11 ans.
-3. Progression pédagogique : commence par des questions accessibles, puis monte légèrement le niveau.
-4. Types de questions variés : "qcm" (avec 3 ou 4 options), "numeric" (réponse sous forme d'un nombre entier ou décimal), "boolean" (Vrai ou Faux), ou "text" (mot ou phrase courte).
+3. Progression pédagogique : questions adaptées au niveau spécifié (${difficulty}).
+4. Types de questions variés : "qcm" (avec 3 ou 4 options claires), "numeric" (réponse numérique entière ou décimale), "boolean" (Vrai ou Faux), ou "text" (mot ou phrase courte).
 5. Fournis toujours une explication très claire, étape par étape, que l'élève lira en cas d'erreur ou de succès.
 6. Ne donne JAMAIS la réponse dans la question.
 
@@ -747,12 +793,21 @@ Tu es un conseiller pédagogique de l'Éducation Nationale française.
 Tu rédiges un rapport d'évaluation diagnostique pour Solène De Pibrac, professeure des écoles en classe de CM2.
 Le rapport concerne l'élève : "${studentName}".
 
-Données RÉELLES de l'élève :
+Données RÉELLES et PRÉCISES de l'élève :
 - Nombre d'exercices réalisés : ${totalExercises}
 - Réussite moyenne globale : ${overallScore}%
-- Détail par compétence : ${JSON.stringify(skills)}
+- Détail par compétence (scores réels) : ${JSON.stringify(skills)}
 - Échantillon des dernières tentatives : ${JSON.stringify(recentAttempts.slice(0, 8))}
 - Dernières erreurs constatées : ${JSON.stringify(recentErrors.slice(0, 8))}
+
+RÈGLES ABSOLUES ET VITALES D'EXACTITUDE :
+1. Une compétence avec un taux de réussite >= 75% ou 100% (par exemple Fractions à 100%) est un POINT FORT INCONTESTABLE. Elle DOIT OBLIGATOIREMENT figurer dans 'masteredPoints'.
+2. IL EST STRICTEMENT INTERDIT de classer une compétence ayant >= 75% ou 100% de réussite dans 'difficulties' ou 'frequentErrors'. Ne jamais inventer de fausse difficulté sur une compétence totalement réussie.
+3. Si l'élève a 100% de réussite globale ou 0 erreur, la section 'difficulties' DOIT OBLIGATOIREMENT contenir :
+   ["Aucune difficulté constatée : l'élève a réussi l'ensemble des exercices avec brio."]
+   et 'frequentErrors' DOIT valoir :
+   ["Aucune erreur récurrente constatée lors des évaluations."]
+4. Dans ce cas de réussite totale, les recommandations doivent porter sur l'approfondissement et des défis de niveau supérieur, et non sur de la remédiation.
 
 Rédige un rapport clair, constructif, professionnel et directement exploitable par l'enseignante de CM2.
 Le rapport doit impérativement respecter ce schéma JSON :
@@ -763,15 +818,13 @@ Le rapport doit impérativement respecter ce schéma JSON :
     "Point fort 2 constaté"
   ],
   "difficulties": [
-    "Difficulté majeure 1 identifiée",
-    "Difficulté 2 identifiée"
+    "Difficulté réelle constatée (ou 'Aucune difficulté constatée' si tout est réussi)"
   ],
   "frequentErrors": [
-    "Type d'erreur récurrente observée",
-    "Autre erreur observée"
+    "Type d'erreur récurrente observée (ou 'Aucune erreur constatée' si réussite totale)"
   ],
   "recommendations": [
-    "Recommandation concrète pour l'enseignante en classe",
+    "Recommandation concrète pour l'enseignante en classe (approfondissement si élève performant, remédiation si difficultés)",
     "Conseil d'entraînement individualisé"
   ],
   "nextSteps": [
@@ -784,6 +837,27 @@ Le rapport doit impérativement respecter ce schéma JSON :
   try {
     const text = await callGemini(prompt);
     const reportData = JSON.parse(text);
+
+    // Post-process sanitation: guarantee that no skill with >= 75% score appears in difficulties
+    const highSkills = Object.entries(skills)
+      .filter(([_, score]) => (score as number) >= 75)
+      .map(([name]) => name.toLowerCase());
+
+    if (reportData.difficulties && Array.isArray(reportData.difficulties)) {
+      reportData.difficulties = reportData.difficulties.filter((diff: string) => {
+        const lower = diff.toLowerCase();
+        // If this difficulty claims a weakness in a skill that is >= 75%, remove it
+        return !highSkills.some((h) => lower.includes(h) && (lower.includes('difficult') || lower.includes('faiblesse') || lower.includes('fragil')));
+      });
+      if (reportData.difficulties.length === 0) {
+        reportData.difficulties = ["Aucune difficulté constatée sur les notions évaluées."];
+      }
+    }
+
+    if (overallScore === 100 || recentErrors.length === 0) {
+      reportData.difficulties = ["Aucune difficulté constatée : l'élève a obtenu 100 % de réussite sur les exercices réalisés."];
+      reportData.frequentErrors = ["Aucune erreur relevée lors de cette session d'évaluation."];
+    }
 
     const db = getDb();
     const newReport: ReportRecord = {

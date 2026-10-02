@@ -67,26 +67,90 @@ export const StudentView: React.FC = () => {
   const correctCount = attempts.filter((a) => a.isCorrect).length;
   const overallSuccess = totalExercises > 0 ? Math.round((correctCount / totalExercises) * 100) : 0;
 
-  // Identify weak skills for "À travailler" from real progress
+  // Real strong skills (score >= 75%) strictly from real progress
+  const strongSkills = progressList
+    .filter((p) => p.totalAttempts > 0 && p.score >= 75)
+    .sort((a, b) => b.score - a.score);
+
+  // Real weak skills (score < 75%) strictly from real progress
   const weakSkills = progressList
     .filter((p) => p.totalAttempts > 0 && p.score < 75)
-    .sort((a, b) => a.score - b.score)
-    .slice(0, 3);
+    .sort((a, b) => a.score - b.score);
 
-  // Default suggested skills to start with if new student
-  const displayWeakSkills = weakSkills.length > 0 ? weakSkills : [
-    { skill: 'Fractions', score: 0, subject: 'Mathématiques' as Subject, isNew: true },
-    { skill: 'Calcul', score: 0, subject: 'Mathématiques' as Subject, isNew: true },
-    { skill: 'Problèmes', score: 0, subject: 'Mathématiques' as Subject, isNew: true },
-  ];
+  // Determine unpracticed skills
+  const practicedSkillNames = new Set(
+    progressList.filter((p) => p.totalAttempts > 0).map((p) => p.skill)
+  );
+  const unpracticedSkills: { skill: string; subject: Subject }[] = [];
+  (['Mathématiques', 'Français'] as Subject[]).forEach((subj) => {
+    CM2_SUBJECTS[subj].skills.forEach((sk) => {
+      if (!practicedSkillNames.has(sk.name)) {
+        unpracticedSkills.push({ skill: sk.name, subject: subj });
+      }
+    });
+  });
 
-  // Recommended exercise: primary weak skill or fractions
-  const recommendedSkill = displayWeakSkills[0] || {
-    skill: 'Fractions',
-    score: 0,
-    subject: 'Mathématiques' as Subject,
-    isNew: true,
+  // Adaptive difficulty function (compétence par compétence)
+  const computeSkillDifficulty = (skillName: string): Difficulty => {
+    const prog = progressList.find((p) => p.skill === skillName);
+    if (!prog || prog.totalAttempts === 0) {
+      return 'moyen'; // Standard CM2 starting level
+    }
+    if (prog.score >= 85) {
+      return 'difficile'; // Advanced / défi : questions stimulantes
+    }
+    if (prog.score >= 60) {
+      return 'moyen'; // Consolidation
+    }
+    return 'facile'; // Remédiation avec guidage
   };
+
+  // Recommended skill for "🎯 Pour toi"
+  let recommendedSkill: {
+    skill: string;
+    subject: Subject;
+    reason: string;
+    difficulty: Difficulty;
+    difficultyBadge: string;
+  };
+
+  if (weakSkills.length > 0) {
+    const target = weakSkills[0];
+    const diff = computeSkillDifficulty(target.skill);
+    recommendedSkill = {
+      skill: target.skill,
+      subject: target.subject as Subject,
+      reason: `Renforcement ciblé (${target.score} % de réussite) pour consolider tes bases.`,
+      difficulty: diff,
+      difficultyBadge: diff === 'facile' ? 'Remédiation guidée' : 'Consolidation',
+    };
+  } else if (unpracticedSkills.length > 0) {
+    const target = unpracticedSkills[0];
+    recommendedSkill = {
+      skill: target.skill,
+      subject: target.subject,
+      reason: `Découverte d'une nouvelle compétence du programme CM2.`,
+      difficulty: 'moyen',
+      difficultyBadge: 'Nouveau chapitre',
+    };
+  } else if (strongSkills.length > 0) {
+    const target = strongSkills[0];
+    recommendedSkill = {
+      skill: target.skill,
+      subject: target.subject as Subject,
+      reason: `Défi approfondissement : tu maîtrises déjà parfaitement cette compétence (${target.score} %) !`,
+      difficulty: 'difficile',
+      difficultyBadge: 'Défi Approfondissement',
+    };
+  } else {
+    recommendedSkill = {
+      skill: 'Fractions',
+      subject: 'Mathématiques',
+      reason: 'Premier entraînement diagnostique de CM2.',
+      difficulty: 'moyen',
+      difficultyBadge: 'Standard CM2',
+    };
+  }
 
   /**
    * Start an exercise session with preset or Gemini-generated exercises
@@ -98,7 +162,14 @@ export const StudentView: React.FC = () => {
     useGemini = true
   ) => {
     setIsGenerating(true);
-    setGenMessage(`Gemini prépare 5 exercices de CM2 en ${skill}...`);
+    const difficulty = forcedDifficulty || computeSkillDifficulty(skill);
+    const diffLabel =
+      difficulty === 'difficile'
+        ? 'défi approfondissement (avancé)'
+        : difficulty === 'facile'
+        ? 'remédiation adaptée'
+        : 'standard CM2';
+    setGenMessage(`Gemini prépare 5 exercices de niveau ${diffLabel} en ${skill}...`);
 
     try {
       if (useGemini) {
@@ -109,8 +180,7 @@ export const StudentView: React.FC = () => {
           .slice(0, 3);
 
         const skillProgress = progressList.find((p) => p.skill === skill);
-        const accuracy = skillProgress?.score || 70;
-        const difficulty = forcedDifficulty || skillProgress?.level || (accuracy < 60 ? 'facile' : 'moyen');
+        const accuracy = skillProgress && skillProgress.totalAttempts > 0 ? skillProgress.score : 70;
 
         const generated = await callGeminiGenerateExercises({
           studentName: user?.firstName || 'Élève',
@@ -130,8 +200,11 @@ export const StudentView: React.FC = () => {
         }
       }
 
-      // Fallback to library exercises
-      const existing = await getExercises(subject, skill);
+      // Fallback to library exercises filtered by difficulty
+      let existing = await getExercises(subject, skill, difficulty);
+      if (existing.length === 0) {
+        existing = await getExercises(subject, skill);
+      }
       if (existing.length > 0) {
         setActiveExerciseSession(existing.slice(0, 5));
       } else {
@@ -356,51 +429,152 @@ export const StudentView: React.FC = () => {
               </div>
             </div>
 
-            {/* Main Action Block: À travailler & Recommandations */}
+            {/* Main Action Block: Points forts, À travailler & Recommandations */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* À travailler */}
+              {/* Carte gauche : Points forts ou Compétences à travailler */}
               <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs flex flex-col justify-between">
                 <div>
-                  <h2 className="text-lg font-extrabold text-slate-800 mb-1 flex items-center gap-2">
-                    <span>À travailler</span>
-                  </h2>
-                  <p className="text-xs text-slate-500 mb-4">
-                    Les compétences où tu peux le plus progresser cette semaine :
-                  </p>
+                  {weakSkills.length > 0 ? (
+                    <>
+                      <h2 className="text-lg font-extrabold text-slate-800 mb-1 flex items-center gap-2">
+                        <span className="text-amber-500">🎯</span>
+                        <span>Compétences à consolider</span>
+                      </h2>
+                      <p className="text-xs text-slate-500 mb-4">
+                        Ces compétences nécessitent un renforcement ciblé :
+                      </p>
 
-                  <div className="space-y-3 mb-6">
-                    {displayWeakSkills.map((ws, idx) => {
-                      const isRed = ws.score < 60;
-                      return (
-                        <div
-                          key={idx}
-                          className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50 border border-slate-200/70 hover:bg-indigo-50/40 transition"
-                        >
-                          <div className="flex items-center gap-3">
-                            <span className="text-base">{isRed ? '🔴' : '🟠'}</span>
-                            <div>
-                              <div className="font-bold text-sm text-slate-800">
-                                {ws.skill}
+                      <div className="space-y-3 mb-6">
+                        {weakSkills.map((ws) => (
+                          <div
+                            key={ws.id}
+                            className="flex items-center justify-between p-3.5 rounded-2xl bg-amber-50/50 border border-amber-200/70 hover:bg-amber-50 transition"
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="text-base">{ws.score < 60 ? '🔴' : '🟠'}</span>
+                              <div>
+                                <div className="font-bold text-sm text-slate-800">
+                                  {ws.skill}
+                                </div>
+                                <div className="text-[11px] text-slate-500">{ws.subject} • Besoin de renforcement</div>
                               </div>
-                              <div className="text-[11px] text-slate-400">{ws.subject}</div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-xs font-extrabold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md">
+                                {ws.score} %
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => startExerciseSession(ws.subject as Subject, ws.skill)}
+                                className="px-3 py-1.5 bg-white border border-amber-300 hover:bg-amber-600 hover:text-white text-amber-800 text-xs font-bold rounded-xl transition cursor-pointer shadow-2xs"
+                              >
+                                S'entraîner
+                              </button>
                             </div>
                           </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-xs font-bold text-slate-600">
-                              {ws.score} %
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => startExerciseSession(ws.subject, ws.skill)}
-                              className="px-3 py-1.5 bg-white border border-slate-200 hover:border-indigo-600 hover:text-indigo-600 text-xs font-bold rounded-xl transition cursor-pointer shadow-2xs"
-                            >
-                              S'entraîner
-                            </button>
+                        ))}
+                      </div>
+                    </>
+                  ) : strongSkills.length > 0 ? (
+                    <>
+                      <div className="flex items-center justify-between mb-3">
+                        <h2 className="text-lg font-extrabold text-emerald-800 flex items-center gap-2">
+                          <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                          <span>Points forts maîtrisés</span>
+                        </h2>
+                        <span className="text-[11px] font-bold bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full">
+                          Excellente maîtrise ⭐
+                        </span>
+                      </div>
+
+                      <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 mb-4 leading-relaxed">
+                        🎉 <strong>Félicitations {user?.firstName} !</strong> Tu as réussi avec brio toutes les compétences évaluées jusqu'ici. Aucun point faible détecté !
+                      </div>
+
+                      <div className="space-y-2.5 mb-6">
+                        {strongSkills.map((ss) => (
+                          <div
+                            key={ss.id}
+                            className="flex items-center justify-between p-3.5 rounded-2xl bg-white border border-emerald-200/80 shadow-2xs"
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="text-base">🟢</span>
+                              <div>
+                                <div className="font-bold text-sm text-slate-800">{ss.skill}</div>
+                                <div className="text-[11px] text-slate-400">{ss.subject} • Compétence acquise</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-extrabold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-md">
+                                {ss.score} % {ss.score === 100 ? '⭐' : ''}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => startExerciseSession(ss.subject as Subject, ss.skill, 'difficile')}
+                                title="Passer au niveau supérieur"
+                                className="px-2.5 py-1 border border-indigo-200 hover:bg-indigo-50 text-indigo-700 text-xs font-bold rounded-lg transition cursor-pointer"
+                              >
+                                Défi +
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {unpracticedSkills.length > 0 && (
+                        <div>
+                          <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
+                            Prochains chapitres à découvrir
+                          </div>
+                          <div className="space-y-1.5 mb-4">
+                            {unpracticedSkills.slice(0, 2).map((us, i) => (
+                              <div
+                                key={i}
+                                className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200/60 text-xs"
+                              >
+                                <span className="font-semibold text-slate-700">
+                                  {us.skill} ({us.subject})
+                                </span>
+                                <span className="text-[10px] font-bold bg-slate-200 text-slate-600 px-2 py-0.5 rounded-md">
+                                  À découvrir
+                                </span>
+                              </div>
+                            ))}
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <h2 className="text-lg font-extrabold text-slate-800 mb-1 flex items-center gap-2">
+                        <span>Tes premières compétences CM2</span>
+                      </h2>
+                      <p className="text-xs text-slate-500 mb-4">
+                        Lance ton premier entraînement pour évaluer tes connaissances :
+                      </p>
+
+                      <div className="space-y-2.5 mb-6">
+                        {unpracticedSkills.slice(0, 3).map((us, i) => (
+                          <div
+                            key={i}
+                            className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50 border border-slate-200"
+                          >
+                            <div>
+                              <div className="font-bold text-sm text-slate-800">{us.skill}</div>
+                              <div className="text-[11px] text-slate-400">{us.subject}</div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => startExerciseSession(us.subject, us.skill)}
+                              className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white text-xs font-bold rounded-xl transition cursor-pointer"
+                            >
+                              Commencer
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <button
@@ -409,16 +583,22 @@ export const StudentView: React.FC = () => {
                   className="w-full py-4 px-6 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white font-extrabold text-base rounded-2xl shadow-lg shadow-indigo-200 transition cursor-pointer flex items-center justify-center gap-2"
                 >
                   <Play className="w-5 h-5 fill-current" />
-                  <span>Commencer un exercice</span>
+                  <span>S'entraîner sur {recommendedSkill.skill}</span>
                 </button>
               </div>
 
-              {/* 🎯 Pour toi (Exercices recommandés par Gemini) */}
-              <div className="bg-gradient-to-br from-amber-50/80 via-white to-indigo-50/50 rounded-3xl p-6 border-2 border-amber-200 shadow-sm flex flex-col justify-between">
+              {/* 🎯 Pour toi (Exercices recommandés & adaptés par Gemini) */}
+              <div className="bg-gradient-to-br from-indigo-50/70 via-white to-sky-50/70 rounded-3xl p-6 border-2 border-indigo-200 shadow-sm flex flex-col justify-between">
                 <div>
-                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-bold mb-3">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                    <span>🎯 Pour toi</span>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-100 text-indigo-900 text-xs font-bold">
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>🎯 Recommandation personnalisée</span>
+                    </div>
+
+                    <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                      {recommendedSkill.difficultyBadge}
+                    </span>
                   </div>
 
                   <h3 className="text-xl font-extrabold text-slate-900 mb-1">
@@ -428,27 +608,44 @@ export const StudentView: React.FC = () => {
                     {recommendedSkill.skill}
                   </div>
 
-                  <p className="text-xs sm:text-sm text-slate-600 leading-relaxed mb-6">
-                    Gemini a analysé tes dernières réponses et a préparé <strong>5 exercices adaptés</strong> à ton niveau actuel pour consolider cette compétence.
+                  <p className="text-xs sm:text-sm text-slate-600 leading-relaxed mb-4">
+                    {recommendedSkill.reason}
                   </p>
+
+                  <div className="p-3.5 rounded-2xl bg-white/80 border border-indigo-100 text-xs text-slate-600 space-y-1 mb-6">
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Niveau de difficulté :</span>
+                      <strong className="text-indigo-700 capitalize">
+                        {recommendedSkill.difficulty === 'difficile'
+                          ? 'Avancé (Défi cycle 3)'
+                          : recommendedSkill.difficulty === 'facile'
+                          ? 'Remédiation guidée'
+                          : 'Standard CM2'}
+                      </strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Format :</span>
+                      <strong className="text-slate-700">5 questions adaptatives</strong>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="space-y-3">
                   <div className="flex items-center gap-2 text-xs text-slate-500">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span>Explications détaillées pas à pas</span>
+                    <span>Explications détaillées pas à pas pour chaque réponse</span>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-slate-500">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span>Difficulté progressive</span>
+                    <span>Ajustement direct selon tes points forts et points à travailler</span>
                   </div>
 
                   <button
                     type="button"
                     onClick={() => startExerciseSession(recommendedSkill.subject, recommendedSkill.skill)}
-                    className="w-full mt-2 py-4 px-6 bg-amber-500 hover:bg-amber-600 active:scale-[0.99] text-white font-extrabold text-base rounded-2xl shadow-lg shadow-amber-200 transition cursor-pointer flex items-center justify-center gap-2"
+                    className="w-full mt-2 py-4 px-6 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] text-white font-extrabold text-base rounded-2xl shadow-lg shadow-indigo-200 transition cursor-pointer flex items-center justify-center gap-2"
                   >
-                    <span>Commencer la série recommandée</span>
+                    <span>Lancer cette série adaptée</span>
                     <ArrowRight className="w-5 h-5" />
                   </button>
                 </div>
