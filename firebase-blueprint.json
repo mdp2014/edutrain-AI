@@ -1,0 +1,131 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Utilisateur de la plateforme (enseignante Solène ou élève de CM2)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "firstName": { "type": "string", "maxLength": 64 },
+        "lastName": { "type": "string", "maxLength": 64 },
+        "email": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "enum": ["student", "teacher"] },
+        "classId": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "firstName", "lastName", "role", "classId"]
+    },
+    "Class": {
+      "title": "Class",
+      "description": "Classe de CM2 unique",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "maxLength": 32 },
+        "teacherId": { "type": "string", "maxLength": 128 },
+        "teacherName": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "teacherId"]
+    },
+    "Exercise": {
+      "title": "Exercise",
+      "description": "Exercice généré par Gemini pour un élève",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "subject": { "type": "string", "maxLength": 64 },
+        "skill": { "type": "string", "maxLength": 64 },
+        "difficulty": { "type": "string", "enum": ["facile", "moyen", "difficile"] },
+        "question": { "type": "string", "maxLength": 1000 },
+        "type": { "type": "string", "enum": ["qcm", "numeric", "boolean", "text"] },
+        "options": { "type": "array" },
+        "correctAnswer": { "type": "string", "maxLength": 200 },
+        "explanation": { "type": "string", "maxLength": 1000 },
+        "assignedBy": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "studentId", "subject", "skill", "difficulty", "question", "type", "correctAnswer", "explanation"]
+    },
+    "Attempt": {
+      "title": "Attempt",
+      "description": "Tentative de réponse d'un élève à un exercice",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "exerciseId": { "type": "string", "maxLength": 128 },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "studentName": { "type": "string", "maxLength": 128 },
+        "subject": { "type": "string", "maxLength": 64 },
+        "skill": { "type": "string", "maxLength": 64 },
+        "question": { "type": "string", "maxLength": 1000 },
+        "answer": { "type": "string", "maxLength": 500 },
+        "correctAnswer": { "type": "string", "maxLength": 500 },
+        "isCorrect": { "type": "boolean" },
+        "score": { "type": "number" },
+        "timeSpent": { "type": "number" },
+        "explanation": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "exerciseId", "studentId", "subject", "skill", "answer", "correctAnswer", "isCorrect"]
+    },
+    "Progress": {
+      "title": "Progress",
+      "description": "Progression agrégée d'un élève par compétence",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "subject": { "type": "string", "maxLength": 64 },
+        "skill": { "type": "string", "maxLength": 64 },
+        "score": { "type": "number" },
+        "totalAttempts": { "type": "number" },
+        "correctAttempts": { "type": "number" },
+        "level": { "type": "string", "enum": ["facile", "moyen", "difficile"] },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "studentId", "subject", "skill", "score"]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "Rapport pédagogique généré pour l'enseignante",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "studentId": { "type": "string", "maxLength": 128 },
+        "teacherId": { "type": "string", "maxLength": 128 },
+        "studentName": { "type": "string", "maxLength": 128 },
+        "content": { "type": "string", "maxLength": 10000 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "studentId", "teacherId", "content"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Profils des utilisateurs (enseignante Solène et élèves)"
+    },
+    "/classes/{classId}": {
+      "schema": { "$ref": "#/entities/Class" },
+      "description": "Classe de CM2"
+    },
+    "/exercises/{exerciseId}": {
+      "schema": { "$ref": "#/entities/Exercise" },
+      "description": "Exercices assignés ou recommandés à un élève"
+    },
+    "/attempts/{attemptId}": {
+      "schema": { "$ref": "#/entities/Attempt" },
+      "description": "Historique des réponses d'exercices"
+    },
+    "/progress/{progressId}": {
+      "schema": { "$ref": "#/entities/Progress" },
+      "description": "Statistiques de maîtrise par compétence"
+    },
+    "/reports/{reportId}": {
+      "schema": { "$ref": "#/entities/Report" },
+      "description": "Rapports d'analyse pédagogique générés pour l'enseignante"
+    }
+  }
+}

@@ -1,0 +1,41 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Users collection (teacher and students)
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    // Classes collection
+    match /classes/{classId} {
+      allow read, write: if true;
+    }
+
+    // Exercises collection
+    match /exercises/{exerciseId} {
+      allow read, write: if true;
+    }
+
+    // Student attempts history
+    match /attempts/{attemptId} {
+      allow read, write: if true;
+    }
+
+    // Student progress per skill
+    match /progress/{progressId} {
+      allow read, write: if true;
+    }
+
+    // Teacher reports
+    match /reports/{reportId} {
+      allow read, write: if true;
+    }
+
+    // Default deny all other paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

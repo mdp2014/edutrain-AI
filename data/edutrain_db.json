@@ -1,0 +1,186 @@
+{
+  "users": [
+    {
+      "id": "teacher-solene-depibrac",
+      "firstName": "Solène",
+      "lastName": "De Pibrac",
+      "fullName": "Solène De Pibrac",
+      "email": "solene.depibrac@edutrain.fr",
+      "identifier": "solene",
+      "role": "teacher",
+      "classId": "class-cm2",
+      "className": "CM2",
+      "password": "marinetpaul",
+      "createdAt": "2026-09-01T08:00:00.000Z"
+    },
+    {
+      "id": "student-1790875829099-576",
+      "firstName": "Marin",
+      "lastName": "De Pibrac",
+      "email": "marin.depibrac@cm2.edutrain.fr",
+      "role": "student",
+      "classId": "class-cm2",
+      "className": "CM2",
+      "password": "01062014",
+      "createdAt": "2026-10-01T17:30:29.099Z"
+    }
+  ],
+  "attempts": [
+    {
+      "id": "att-student-1790875829099-576-1790875952356",
+      "exerciseId": "gen-1790875846132-5",
+      "studentId": "student-1790875829099-576",
+      "studentName": "Marin De Pibrac",
+      "subject": "Mathématiques",
+      "skill": "Calcul",
+      "difficulty": "moyen",
+      "question": "Pour préparer une fête, tu as 5 paquets de 12 bonbons. Tu en distribues 20. Combien de bonbons te reste-t-il ?",
+      "answer": "dxc",
+      "correctAnswer": "40",
+      "isCorrect": false,
+      "score": 0,
+      "timeSpent": 2,
+      "explanation": "D'abord, calcule le nombre total de bonbons : 5 x 12 = 60. Ensuite, soustrais ceux que tu as distribués : 60 - 20 = 40. Bravo pour tes efforts !",
+      "createdAt": "2026-10-01T17:32:32.356Z"
+    },
+    {
+      "id": "att-student-1790875829099-576-1790875948741",
+      "exerciseId": "gen-1790875846132-4",
+      "studentId": "student-1790875829099-576",
+      "studentName": "Marin De Pibrac",
+      "subject": "Mathématiques",
+      "skill": "Calcul",
+      "difficulty": "moyen",
+      "question": "Marin, si tu divises 120 par 4, quel nombre obtiens-tu ?",
+      "answer": "30",
+      "correctAnswer": "30",
+      "isCorrect": true,
+      "score": 100,
+      "timeSpent": 31,
+      "explanation": "Tu peux utiliser la table de 4 : comme 12 divisé par 4 égale 3, alors 120 divisé par 4 égale 30.",
+      "createdAt": "2026-10-01T17:32:28.741Z"
+    },
+    {
+      "id": "att-student-1790875829099-576-1790875913756",
+      "exerciseId": "gen-1790875846132-3",
+      "studentId": "student-1790875829099-576",
+      "studentName": "Marin De Pibrac",
+      "subject": "Mathématiques",
+      "skill": "Calcul",
+      "difficulty": "moyen",
+      "question": "Vrai ou Faux : Le résultat de la soustraction 100 - 45,5 est égal à 54,5.",
+      "answer": "Faux",
+      "correctAnswer": "Vrai",
+      "isCorrect": false,
+      "score": 0,
+      "timeSpent": 7,
+      "explanation": "Pour vérifier, on peut faire l'addition inverse : 54,5 + 45,5. Les parties décimales (0,5 + 0,5) forment 1 unité, et 54 + 45 + 1 = 100. C'est bien exact !",
+      "createdAt": "2026-10-01T17:31:53.756Z"
+    },
+    {
+      "id": "att-student-1790875829099-576-1790875905290",
+      "exerciseId": "gen-1790875846132-2",
+      "studentId": "student-1790875829099-576",
+      "studentName": "Marin De Pibrac",
+      "subject": "Mathématiques",
+      "skill": "Calcul",
+      "difficulty": "moyen",
+      "question": "Parmi les propositions suivantes, laquelle correspond au résultat de la multiplication posée 142 x 3 ?",
+      "answer": "326",
+      "correctAnswer": "426",
+      "isCorrect": false,
+      "score": 0,
+      "timeSpent": 3,
+      "explanation": "Pour calculer 142 x 3, on décompose : (100 x 3) + (40 x 3) + (2 x 3), ce qui donne 300 + 120 + 6 = 426.",
+      "createdAt": "2026-10-01T17:31:45.290Z"
+    },
+    {
+      "id": "att-student-1790875829099-576-1790875899500",
+      "exerciseId": "gen-1790875846132-1",
+      "studentId": "student-1790875829099-576",
+      "studentName": "Marin De Pibrac",
+      "subject": "Mathématiques",
+      "skill": "Calcul",
+      "difficulty": "moyen",
+      "question": "Marin, calcule mentalement le résultat de cette addition de nombres décimaux : 12,5 + 4,7. Quel est le résultat ?",
+      "answer": "17.2",
+      "correctAnswer": "17,2",
+      "isCorrect": true,
+      "score": 100,
+      "timeSpent": 47,
+      "explanation": "Pour additionner ces nombres, on additionne d'abord les parties entières (12 + 4 = 16), puis les parties décimales (0,5 + 0,7 = 1,2). Enfin, on additionne les deux résultats : 16 + 1,2 = 17,2.",
+      "createdAt": "2026-10-01T17:31:39.500Z"
+    }
+  ],
+  "progress": [
+    {
+      "id": "prog-student-1790875829099-576-calcul",
+      "studentId": "student-1790875829099-576",
+      "subject": "Mathématiques",
+      "skill": "Calcul",
+      "score": 40,
+      "totalAttempts": 5,
+      "correctAttempts": 2,
+      "level": "facile",
+      "updatedAt": "2026-10-01T17:32:32.391Z"
+    }
+  ],
+  "reports": [
+    {
+      "id": "rep-1790877238912",
+      "studentId": "student-1790875829099-576",
+      "studentName": "Marin De Pibrac",
+      "teacherId": "teacher-solene-depibrac",
+      "summary": "Marin présente un profil d'élève en cours d'acquisition dans le domaine du calcul. S'il démontre une capacité à traiter correctement des opérations simples et des additions de décimaux, il semble éprouver des difficultés face aux exercices nécessitant une réflexion plus posée. Une tendance à la précipitation, illustrée par des temps de réponse très courts, pénalise ses résultats globaux.",
+      "masteredPoints": [
+        "Maîtrise du calcul mental avec nombres décimaux simples (réussite sur 12,5 + 4,7).",
+        "Capacité à effectuer des divisions simples avec succès (division de 120 par 4)."
+      ],
+      "difficulties": [
+        "Faiblesse dans la structuration du raisonnement face aux problèmes complexes impliquant plusieurs étapes.",
+        "Instabilité dans la mémorisation ou l'application des procédures de multiplication et de soustraction posées."
+      ],
+      "frequentErrors": [
+        "Précipitation excessive : réponses fournies en quelques secondes conduisant à des erreurs d'étourderie ou de saisie.",
+        "Difficulté à valider la cohérence d'un résultat (erreurs sur des calculs de soustraction ou multiplication pourtant accessibles)."
+      ],
+      "recommendations": [
+        "Encourager systématiquement Marin à expliciter sa démarche par écrit avant de valider une réponse.",
+        "Proposer un travail sur l'estime de soi et la gestion du temps, en le félicitant davantage pour la justesse de son raisonnement que pour la rapidité."
+      ],
+      "nextSteps": [
+        "Mettre en place un tutorat par les pairs lors des ateliers de mathématiques pour favoriser la verbalisation des stratégies.",
+        "Proposer une remédiation ciblée sur la vérification des résultats (méthode de la preuve par l'addition inverse pour les soustractions)."
+      ],
+      "createdAt": "2026-10-01T17:53:58.912Z"
+    },
+    {
+      "id": "rep-1790877225985",
+      "studentId": "student-1790875829099-576",
+      "studentName": "Marin De Pibrac",
+      "teacherId": "teacher-solene-depibrac",
+      "summary": "Marin présente un profil d'apprentissage contrasté en calcul, avec une maîtrise ponctuelle des opérations simples mais une fragilité persistante dans la résolution de problèmes et les calculs complexes. Si l'élève montre une bonne capacité de concentration sur certains exercices, il tend à précipiter ses réponses pour les items plus longs, impactant ainsi sa précision globale. Une attention particulière doit être portée sur la méthodologie de résolution et la vérification des résultats.",
+      "masteredPoints": [
+        "Maîtrise des divisions simples (ex: 120 / 4 = 30 avec un score de 100%).",
+        "Capacité à effectuer des additions de nombres décimaux mentalement (ex: 12,5 + 4,7 = 17,2)."
+      ],
+      "difficulties": [
+        "Difficultés marquées dans la résolution de problèmes en plusieurs étapes, souvent dues à une lecture trop rapide de l'énoncé.",
+        "Instabilité dans la maîtrise des techniques opératoires posées, notamment la multiplication et la soustraction de décimaux."
+      ],
+      "frequentErrors": [
+        "Précipitation lors de la lecture des consignes entraînant des erreurs de saisie ou des réponses hors-sujet.",
+        "Difficulté à réaliser des calculs mentaux rapides de vérification pour confirmer la pertinence d'un résultat."
+      ],
+      "recommendations": [
+        "Encourager Marin à prendre un temps de pause systématique pour relire l'énoncé et vérifier ses calculs avant de valider la réponse.",
+        "Proposer des activités de remédiation basées sur la décomposition des opérations (méthode par étapes) pour structurer son raisonnement."
+      ],
+      "nextSteps": [
+        "Mettre en place des exercices de type 'problèmes à étapes' pour entraîner l'élève à segmenter ses calculs.",
+        "Instaurer un rituel de vérification systématique ('l'addition inverse') pour consolider la compréhension des soustractions avec décimaux."
+      ],
+      "createdAt": "2026-10-01T17:53:45.985Z"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "name": "EduTrain AI",
+  "description": "Plateforme d'entraînement scolaire personnalisée pour classe de CM2 avec suivi enseignant et exercices adaptés par Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
