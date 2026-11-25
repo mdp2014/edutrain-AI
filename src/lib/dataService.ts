@@ -9,207 +9,119 @@ import {
 } from '../types';
 import { INITIAL_EXERCISES } from './demoData';
 import { generateProceduralExercise } from './proceduralGenerator';
-import { db } from './firebase';
-import { collection, getDocs, doc, setDoc, deleteDoc, query, where } from 'firebase/firestore';
+import {
+  supabase,
+  getAuthHeaders,
+  mapUserRow,
+  mapExerciseRow,
+  mapAttemptRow,
+  mapProgressRow,
+  mapReportRow,
+} from './supabase';
 
 /**
- * Fetch all registered students in the CM2 class
- * Reads from both server API and Firestore to guarantee 100% reliability
+ * Fetch all registered students in the CM2 class (RLS ensures teacher access)
  */
 export async function getCM2Students(): Promise<UserProfile[]> {
-  const studentsMap = new Map<string, UserProfile>();
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('role', 'student')
+    .order('created_at', { ascending: false });
 
-  // 1. Try server API
-  try {
-    const res = await fetch('/api/students');
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data.students)) {
-        data.students.forEach((st: UserProfile) => {
-          studentsMap.set(st.id, st);
-        });
-      }
-    }
-  } catch (error) {
-    console.warn('API students fetch notice:', error);
+  if (error) {
+    console.warn('[Supabase] getCM2Students error:', error.message);
+    return [];
   }
 
-  // 2. Also query Firestore directly
-  try {
-    const snap = await getDocs(query(collection(db, 'users'), where('role', '==', 'student')));
-    snap.forEach((docSnap) => {
-      const data = docSnap.data();
-      if (!studentsMap.has(docSnap.id)) {
-        studentsMap.set(docSnap.id, {
-          id: docSnap.id,
-          firstName: data.firstName || '',
-          lastName: data.lastName || '',
-          email: data.email || '',
-          role: 'student',
-          classId: data.classId || 'class-cm2',
-          className: data.className || 'CM2',
-          createdAt: data.createdAt || new Date().toISOString(),
-        });
-      }
-    });
-  } catch (fsErr) {
-    console.warn('Firestore direct query notice:', fsErr);
-  }
-
-  return Array.from(studentsMap.values());
+  return (data || []).map(mapUserRow);
 }
 
 /**
  * Fetch all real attempts made by a specific student
  */
 export async function getStudentAttempts(studentId: string): Promise<Attempt[]> {
-  const attemptsMap = new Map<string, Attempt>();
+  const { data, error } = await supabase
+    .from('attempts')
+    .select('*')
+    .eq('student_id', studentId)
+    .order('created_at', { ascending: false });
 
-  try {
-    const res = await fetch(`/api/attempts/${encodeURIComponent(studentId)}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data.attempts)) {
-        data.attempts.forEach((a: Attempt) => attemptsMap.set(a.id, a));
-      }
-    }
-  } catch (error) {
-    console.warn('API attempts fetch notice:', error);
+  if (error) {
+    console.warn('[Supabase] getStudentAttempts error:', error.message);
+    return [];
   }
 
-  try {
-    const snap = await getDocs(
-      query(collection(db, 'attempts'), where('studentId', '==', studentId))
-    );
-    snap.forEach((docSnap) => {
-      const data = docSnap.data() as Attempt;
-      if (!attemptsMap.has(docSnap.id)) {
-        attemptsMap.set(docSnap.id, { ...data, id: docSnap.id });
-      }
-    });
-  } catch (e) {}
-
-  return Array.from(attemptsMap.values()).sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
+  return (data || []).map(mapAttemptRow);
 }
 
 /**
  * Fetch real student progress per skill
  */
 export async function getStudentProgress(studentId: string): Promise<StudentProgress[]> {
-  const progMap = new Map<string, StudentProgress>();
+  const { data, error } = await supabase
+    .from('progress')
+    .select('*')
+    .eq('student_id', studentId)
+    .order('updated_at', { ascending: false });
 
-  try {
-    const res = await fetch(`/api/progress/${encodeURIComponent(studentId)}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data.progress)) {
-        data.progress.forEach((p: StudentProgress) => progMap.set(p.id, p));
-      }
-    }
-  } catch (error) {
-    console.warn('API progress fetch notice:', error);
+  if (error) {
+    console.warn('[Supabase] getStudentProgress error:', error.message);
+    return [];
   }
 
-  try {
-    const snap = await getDocs(
-      query(collection(db, 'progress'), where('studentId', '==', studentId))
-    );
-    snap.forEach((docSnap) => {
-      const data = docSnap.data() as StudentProgress;
-      if (!progMap.has(docSnap.id)) {
-        progMap.set(docSnap.id, { ...data, id: docSnap.id });
-      }
-    });
-  } catch (e) {}
-
-  return Array.from(progMap.values());
+  return (data || []).map(mapProgressRow);
 }
 
 /**
- * Record a new attempt in both the server and Firestore
+ * Atomically record a new attempt and recalculate skill progress in Supabase
  */
 export async function recordAttempt(attempt: Attempt): Promise<void> {
-  let serverSaved = false;
-  try {
-    const res = await fetch('/api/attempts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(attempt),
-    });
-    if (res.ok) {
-      serverSaved = true;
-    }
-  } catch (error) {
-    console.warn('API recordAttempt error:', error);
-  }
+  const { error } = await supabase.rpc('record_attempt_and_progress', {
+    p_id: attempt.id,
+    p_exercise_id: attempt.exerciseId,
+    p_student_id: attempt.studentId,
+    p_student_name: attempt.studentName,
+    p_subject: attempt.subject,
+    p_skill: attempt.skill,
+    p_difficulty: attempt.difficulty || 'moyen',
+    p_question: attempt.question,
+    p_answer: attempt.answer,
+    p_correct_answer: attempt.correctAnswer,
+    p_is_correct: attempt.isCorrect,
+    p_score: attempt.score,
+    p_time_spent: attempt.timeSpent ?? 0,
+    p_explanation: attempt.explanation || '',
+  });
 
-  try {
-    await setDoc(doc(db, 'attempts', attempt.id), attempt);
-
-    // If the server endpoint wasn't available (e.g. GitHub Pages static deployment),
-    // compute and update the student's skill progress document directly in Firestore.
-    if (!serverSaved) {
-      const snap = await getDocs(
-        query(collection(db, 'attempts'), where('studentId', '==', attempt.studentId))
-      );
-      const skillAttempts: Attempt[] = [];
-      snap.forEach((d) => {
-        const data = d.data() as Attempt;
-        if (data.skill === attempt.skill && data.subject === attempt.subject) {
-          skillAttempts.push(data);
-        }
-      });
-
-      if (!skillAttempts.some((a) => a.id === attempt.id)) {
-        skillAttempts.push(attempt);
-      }
-
-      const total = skillAttempts.length;
-      const correct = skillAttempts.filter((a) => a.isCorrect).length;
-      const score = total > 0 ? Math.round((correct / total) * 100) : 0;
-
-      const sortedRecent = [...skillAttempts].sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-      const recentThree = sortedRecent.slice(0, 3);
-      let level: Difficulty = 'moyen';
-      if (recentThree.length >= 3 && recentThree.every((a) => a.isCorrect)) {
-        level = score > 85 ? 'difficile' : 'moyen';
-      } else if (recentThree.length >= 2 && recentThree.slice(0, 2).every((a) => !a.isCorrect)) {
-        level = 'facile';
-      } else {
-        level = score >= 75 ? 'moyen' : 'facile';
-      }
-
-      const progId = `prog-${attempt.studentId}-${attempt.skill.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
-      const updatedProg: StudentProgress = {
-        id: progId,
-        studentId: attempt.studentId,
-        subject: attempt.subject,
-        skill: attempt.skill,
-        score,
-        totalAttempts: total,
-        correctAttempts: correct,
-        level,
-        updatedAt: new Date().toISOString(),
-      };
-      await setDoc(doc(db, 'progress', progId), updatedProg);
-    }
-  } catch (e) {
-    console.warn('Firestore attempt/progress write error:', e);
+  if (error) {
+    console.error('[Supabase] recordAttempt RPC error:', error.message);
+    throw new Error(error.message);
   }
 }
 
 /**
- * Get available exercise bank with optional difficulty filtering
+ * Get available exercise bank from Supabase with fallback to starter bank
  */
 export async function getExercises(
   subject?: Subject,
   skill?: string,
   difficulty?: Difficulty
 ): Promise<ExerciseItem[]> {
+  try {
+    let query = supabase.from('exercises').select('*');
+    if (subject) query = query.eq('subject', subject);
+    if (skill) query = query.eq('skill', skill);
+    if (difficulty) query = query.eq('difficulty', difficulty);
+
+    const { data, error } = await query;
+    if (!error && Array.isArray(data) && data.length > 0) {
+      return data.map(mapExerciseRow);
+    }
+  } catch (err) {
+    console.warn('[Supabase] getExercises fallback to local starter bank:', err);
+  }
+
   const matches = INITIAL_EXERCISES.filter((ex) => {
     if (subject && ex.subject !== subject) return false;
     if (skill && ex.skill !== skill) return false;
@@ -219,7 +131,6 @@ export async function getExercises(
 
   if (matches.length > 0) return matches;
 
-  // Fallback ignoring difficulty if none matched exactly
   return INITIAL_EXERCISES.filter((ex) => {
     if (subject && ex.subject !== subject) return false;
     if (skill && ex.skill !== skill) return false;
@@ -251,9 +162,10 @@ export async function callGeminiGenerateAdaptiveExercise(params: {
   recentMistakes?: any[];
 }): Promise<ExerciseItem> {
   try {
+    const headers = await getAuthHeaders();
     const response = await fetch('/api/generate-adaptive-exercise', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(params),
     });
 
@@ -270,7 +182,7 @@ export async function callGeminiGenerateAdaptiveExercise(params: {
     console.warn('API adaptive exercise fetch error, using procedural fallback:', error);
   }
 
-  // Robust procedural fallback
+  // Robust procedural fallback (also used on static GitHub Pages)
   return generateProceduralExercise(
     params.subject,
     params.skill,
@@ -293,15 +205,16 @@ export async function callGeminiGenerateExercises(params: {
   accuracy: number;
   recentErrors?: string[];
 }): Promise<ExerciseItem[]> {
+  const headers = await getAuthHeaders();
   const response = await fetch('/api/generate-exercises', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(params),
   });
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.message || 'Échec de la génération des exercices');
+    throw new Error(errorData.message || errorData.error || 'Échec de la génération des exercices');
   }
 
   const data = await response.json();
@@ -325,9 +238,10 @@ export async function callGeminiGenerateReport(params: {
   recentErrors: Attempt[];
 }): Promise<TeacherReport> {
   try {
+    const headers = await getAuthHeaders();
     const response = await fetch('/api/generate-report', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(params),
     });
 
@@ -364,8 +278,8 @@ export async function callGeminiGenerateReport(params: {
     teacherId: 'teacher-solene-depibrac',
     summary: `${params.studentName} a réalisé ${params.totalExercises} exercice(s) avec un taux de réussite global de ${params.overallScore} %. ${
       params.overallScore >= 75
-        ? "Le profil montre une très bonne maîtrise des attendus de CM2."
-        : "Des séances régulières de consolidation permettront de stabiliser les notions fragiles."
+        ? 'Le profil montre une très bonne maîtrise des attendus de CM2.'
+        : 'Des séances régulières de consolidation permettront de stabiliser les notions fragiles.'
     }`,
     masteredPoints:
       masteredPoints.length > 0
@@ -374,29 +288,41 @@ export async function callGeminiGenerateReport(params: {
     difficulties:
       difficulties.length > 0
         ? difficulties
-        : ["Aucune difficulté majeure constatée sur les notions évaluées."],
+        : ['Aucune difficulté majeure constatée sur les notions évaluées.'],
     frequentErrors,
     recommendations:
       difficulties.length > 0
         ? [
-            "Proposer des séries courtes de remédiation guidée avec manipulation ou schéma.",
+            'Proposer des séries courtes de remédiation guidée avec manipulation ou schéma.',
             "Encourager l'utilisation des indices progressifs de Néo avant de valider.",
           ]
         : [
             "Poursuivre avec des défis d'approfondissement de fin de CM2 / début 6e.",
-            "Varier les problèmes à étapes pour entretenir le raisonnement logique.",
+            'Varier les problèmes à étapes pour entretenir le raisonnement logique.',
           ],
     nextSteps: [
       "Poursuivre l'entraînement adaptatif quotidien de 5 questions.",
-      "Vérifier la stabilité des acquis lors de la prochaine séance.",
+      'Vérifier la stabilité des acquis lors de la prochaine séance.',
     ],
     createdAt: new Date().toISOString(),
   };
 
   try {
-    await setDoc(doc(db, 'reports', fallbackReport.id), fallbackReport);
-  } catch (fsErr) {
-    console.warn('Firestore save fallback report error:', fsErr);
+    await supabase.from('reports').insert({
+      id: fallbackReport.id,
+      student_id: fallbackReport.studentId,
+      student_name: fallbackReport.studentName,
+      teacher_id: fallbackReport.teacherId,
+      summary: fallbackReport.summary,
+      mastered_points: fallbackReport.masteredPoints,
+      difficulties: fallbackReport.difficulties,
+      frequent_errors: fallbackReport.frequentErrors,
+      recommendations: fallbackReport.recommendations,
+      next_steps: fallbackReport.nextSteps,
+      created_at: fallbackReport.createdAt,
+    });
+  } catch (sbErr) {
+    console.warn('[Supabase] save fallback report error:', sbErr);
   }
 
   return fallbackReport;
@@ -406,60 +332,48 @@ export async function callGeminiGenerateReport(params: {
  * Get all generated reports for the teacher
  */
 export async function getTeacherReports(): Promise<TeacherReport[]> {
-  const reportsMap = new Map<string, TeacherReport>();
+  const { data, error } = await supabase
+    .from('reports')
+    .select('*')
+    .order('created_at', { ascending: false });
 
-  try {
-    const res = await fetch('/api/reports');
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data.reports)) {
-        data.reports.forEach((r: TeacherReport) => reportsMap.set(r.id, r));
-      }
-    }
-  } catch (error) {
-    console.warn('API reports fetch notice:', error);
+  if (error) {
+    console.warn('[Supabase] getTeacherReports error:', error.message);
+    return [];
   }
 
-  try {
-    const snap = await getDocs(collection(db, 'reports'));
-    snap.forEach((docSnap) => {
-      const data = docSnap.data() as TeacherReport;
-      if (!reportsMap.has(docSnap.id)) {
-        reportsMap.set(docSnap.id, { ...data, id: docSnap.id });
-      }
-    });
-  } catch (fsErr) {
-    console.warn('Firestore reports fetch notice:', fsErr);
-  }
-
-  return Array.from(reportsMap.values()).sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
+  return (data || []).map(mapReportRow);
 }
 
 /**
- * Delete a student completely (by Teacher)
+ * Delete a student completely (by Teacher).
+ * Uses backend route first (to also clean up auth.users when service role is configured),
+ * and falls back to direct Supabase delete (ON DELETE CASCADE cleans attempts/progress/reports).
  */
 export async function deleteStudent(studentId: string): Promise<boolean> {
-  let ok = false;
   try {
+    const headers = await getAuthHeaders();
     const res = await fetch(`/api/students/${encodeURIComponent(studentId)}`, {
       method: 'DELETE',
+      headers,
     });
-    if (res.ok) ok = true;
+    if (res.ok) return true;
   } catch (e) {
-    console.warn('API deleteStudent notice:', e);
+    console.warn('API deleteStudent notice, falling back to direct Supabase delete:', e);
   }
 
-  // Also delete directly from Firestore
-  try {
-    await deleteDoc(doc(db, 'users', studentId));
-    ok = true;
-  } catch (fsErr) {
-    console.warn('Firestore delete user error:', fsErr);
+  const { error } = await supabase
+    .from('users')
+    .delete()
+    .eq('id', studentId)
+    .eq('role', 'student');
+
+  if (error) {
+    console.warn('[Supabase] direct deleteStudent error:', error.message);
+    return false;
   }
 
-  return ok;
+  return true;
 }
 
 /**
@@ -473,73 +387,67 @@ export async function updateStudentPassword(
     return { success: false, error: 'Le mot de passe doit comporter au moins 6 caractères.' };
   }
 
-  let success = false;
   try {
+    const headers = await getAuthHeaders();
     const res = await fetch(`/api/students/${encodeURIComponent(studentId)}/password`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ newPassword }),
     });
-    const data = await res.json();
-    if (res.ok && data.success) {
-      success = true;
+    const ct = res.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const data = await res.json();
+      if (res.ok && data.success) {
+        return { success: true };
+      }
+      return {
+        success: false,
+        error: data.error || 'Impossible de modifier le mot de passe de cet élève.',
+      };
     }
   } catch (e) {
     console.warn('API updateStudentPassword error:', e);
   }
 
-  // Also update directly in Firestore
-  try {
-    await setDoc(doc(db, 'users', studentId), { password: newPassword }, { merge: true });
-    success = true;
-  } catch (fsErr) {
-    console.warn('Firestore update password error:', fsErr);
-  }
-
-  return { success, error: success ? undefined : 'Impossible de modifier le mot de passe.' };
+  return {
+    success: false,
+    error:
+      'La modification du mot de passe d’un élève nécessite le serveur backend avec SUPABASE_SERVICE_ROLE_KEY configurée.',
+  };
 }
 
 /**
  * Clear all data from the database while keeping the teacher
  */
 export async function clearDatabasePreservingTeacher(): Promise<{ success: boolean; error?: string }> {
-  let success = false;
   try {
+    const headers = await getAuthHeaders();
     const res = await fetch('/api/admin/clear-database', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
     });
-    const data = await res.json();
-    if (res.ok && data.success) {
-      success = true;
+    const ct = res.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const data = await res.json();
+      if (res.ok && data.success) {
+        return { success: true };
+      }
     }
-  } catch (e: any) {
-    console.warn('API clearDatabasePreservingTeacher error:', e);
+  } catch (e) {
+    console.warn('API clearDatabasePreservingTeacher notice, using direct Supabase cleanup:', e);
   }
 
-  // Also ensure client-side Firestore cleanup if possible
+  // Direct authenticated teacher cleanup via RLS
   try {
-    const studentUsersSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'student')));
-    for (const d of studentUsersSnap.docs) {
-      await deleteDoc(doc(db, 'users', d.id));
+    await supabase.from('reports').delete().neq('id', '');
+    await supabase.from('progress').delete().neq('id', '');
+    await supabase.from('attempts').delete().neq('id', '');
+    const { error } = await supabase.from('users').delete().eq('role', 'student');
+    if (error) {
+      return { success: false, error: error.message };
     }
-    const attSnap = await getDocs(collection(db, 'attempts'));
-    for (const d of attSnap.docs) {
-      await deleteDoc(doc(db, 'attempts', d.id));
-    }
-    const progSnap = await getDocs(collection(db, 'progress'));
-    for (const d of progSnap.docs) {
-      await deleteDoc(doc(db, 'progress', d.id));
-    }
-    const repSnap = await getDocs(collection(db, 'reports'));
-    for (const d of repSnap.docs) {
-      await deleteDoc(doc(db, 'reports', d.id));
-    }
-    success = true;
-  } catch (fsErr) {
-    console.warn('Client Firestore cleanup notice:', fsErr);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Impossible de vider la base de données.' };
   }
-
-  return { success, error: success ? undefined : 'Impossible de vider la base de données.' };
 }
-

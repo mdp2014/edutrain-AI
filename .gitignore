@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+data/
+supabase/02_migrate_firestore_data.sql
+

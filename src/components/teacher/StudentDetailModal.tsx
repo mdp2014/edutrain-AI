@@ -56,6 +56,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   const [passwordFeedback, setPasswordFeedback] = useState<{ message: string; isError: boolean } | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -81,6 +82,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   // Generate Report with Gemini
   const handleGenerateReport = async () => {
     setIsGeneratingReport(true);
+    setActionError(null);
     try {
       const skillsMap: { [skill: string]: number } = {};
       progress.forEach((p) => {
@@ -101,7 +103,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
       if (onReportGenerated) onReportGenerated(report);
     } catch (err) {
       console.error(err);
-      alert('Impossible de générer le rapport avec Gemini.');
+      setActionError('Impossible de générer le rapport pour le moment. Veuillez réessayer.');
     } finally {
       setIsGeneratingReport(false);
     }
@@ -139,6 +141,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
 
   const handleDeleteStudent = async () => {
     setIsDeleting(true);
+    setActionError(null);
     const ok = await deleteStudent(student.id);
     setIsDeleting(false);
 
@@ -148,7 +151,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
       }
       onClose();
     } else {
-      alert('Impossible de supprimer cet élève. Veuillez réessayer.');
+      setActionError('Impossible de supprimer cet élève. Vérifiez vos permissions Supabase et réessayez.');
     }
   };
 
@@ -233,6 +236,13 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
               <span>Génération & adaptation 100% automatiques pour l'élève à chaque session.</span>
             </div>
           </div>
+
+          {actionError && (
+            <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl text-rose-700 text-xs flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{actionError}</span>
+            </div>
+          )}
 
           {/* Generated Pedagogical Report Display */}
           {activeReport && (
@@ -710,7 +720,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
                 </strong>
               </div>
 
-              {inspectedAttempt.timeSpent && (
+              {typeof inspectedAttempt.timeSpent === 'number' && inspectedAttempt.timeSpent > 0 && (
                 <div>
                   <span className="text-slate-500">Temps de réponse : </span>
                   <strong className="text-slate-700">{inspectedAttempt.timeSpent} secondes</strong>

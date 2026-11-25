@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { ExerciseItem, Attempt, Difficulty, NeoEmotionState, Subject } from '../../types';
 import { recordAttempt, callGeminiGenerateAdaptiveExercise } from '../../lib/dataService';
+import { generateProceduralExercise } from '../../lib/proceduralGenerator';
 import { useAuth } from '../../lib/authContext';
 import { soundFx } from '../../lib/soundFx';
 import { NEO_MESSAGES } from '../../lib/neoService';
@@ -233,7 +234,11 @@ export const ExerciseRunner: React.FC<ExerciseRunnerProps> = ({
         explanation: currentExercise.explanation,
         createdAt: new Date().toISOString(),
       };
-      await recordAttempt(attempt);
+      try {
+        await recordAttempt(attempt);
+      } catch (err) {
+        console.warn('Attempt save notice (continuing session):', err);
+      }
     }
 
     // Automatically trigger next question generation in the background
@@ -248,6 +253,16 @@ export const ExerciseRunner: React.FC<ExerciseRunnerProps> = ({
         setNextExercise(null);
       } else if (exercises && exercises[currentIndex + 1]) {
         setCurrentExercise(exercises[currentIndex + 1]);
+      } else {
+        // Instant procedural fallback if next exercise hasn't arrived yet
+        const fallback = generateProceduralExercise(
+          activeSubject,
+          activeSkill,
+          currentExercise.difficulty,
+          user?.firstName || 'Élève',
+          [...sessionResults.map((s) => s.question), currentExercise.question]
+        );
+        setCurrentExercise(fallback);
       }
 
       setCurrentIndex((prev) => prev + 1);
@@ -257,7 +272,7 @@ export const ExerciseRunner: React.FC<ExerciseRunnerProps> = ({
       onUpdateNeo?.('neo-idle', "Nouvelle question prête ! Prends ton temps pour bien lire la consigne. 🎯");
     } else {
       setCompleted(true);
-      const totalCorrect = sessionResults.filter((r) => r.isCorrect).length + (isCorrect ? 1 : 0);
+      const totalCorrect = sessionResults.filter((r) => r.isCorrect).length;
       const finalScore = Math.round((totalCorrect / totalQuestions) * 100);
 
       onUpdateNeo?.('neo-celebrating', "Bravo ! 🎉 Tu viens de terminer ta série adaptée !");

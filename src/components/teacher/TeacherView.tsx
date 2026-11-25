@@ -10,8 +10,7 @@ import {
 import { UserProfile, TeacherReport, Attempt, StudentProgress } from '../../types';
 import { TEACHER_CONFIG } from '../../lib/constants';
 import { StudentDetailModal } from './StudentDetailModal';
-import { db } from '../../lib/firebase';
-import { onSnapshot, collection, query, where } from 'firebase/firestore';
+import { supabase } from '../../lib/supabase';
 import { NeoCharacter } from '../neo/NeoCharacter';
 import {
   GraduationCap,
@@ -105,25 +104,31 @@ export const TeacherView: React.FC = () => {
   useEffect(() => {
     loadData();
 
-    // 1. Auto-refresh polling every 5 seconds
-    const interval = setInterval(loadData, 5000);
+    // 1. Auto-refresh polling every 15 seconds
+    const interval = setInterval(loadData, 15000);
 
-    // 2. Real-time Firestore listener for instant updates
-    let unsubscribe = () => {};
-    try {
-      const q = query(collection(db, 'users'), where('role', '==', 'student'));
-      unsubscribe = onSnapshot(q, () => {
-        loadData();
-      }, (err) => {
-        console.warn('TeacherView onSnapshot notice:', err);
-      });
-    } catch (e) {
-      console.warn('onSnapshot error:', e);
-    }
+    // 2. Real-time Supabase listener for instant updates
+    const channel = supabase
+      .channel('teacher-dashboard-live')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'users' },
+        () => {
+          loadData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'attempts' },
+        () => {
+          loadData();
+        }
+      )
+      .subscribe();
 
     return () => {
       clearInterval(interval);
-      unsubscribe();
+      supabase.removeChannel(channel);
     };
   }, [activeTab]);
 
@@ -648,7 +653,7 @@ export const TeacherView: React.FC = () => {
               </div>
               <div className="flex justify-between">
                 <span>Base de données :</span>
-                <strong className="text-slate-800">Données réelles (aucune donnée fictive)</strong>
+                <strong className="text-slate-800">Supabase PostgreSQL + RLS</strong>
               </div>
             </div>
 

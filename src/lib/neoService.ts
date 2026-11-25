@@ -4,6 +4,7 @@ import {
   NeoChatMessage,
   NeoContextPayload,
 } from '../types';
+import { getAuthHeaders } from './supabase';
 
 export interface NeoApiResponse {
   success: boolean;
@@ -18,9 +19,10 @@ export interface NeoApiResponse {
  */
 export async function askNeo(payload: NeoContextPayload): Promise<NeoApiResponse> {
   try {
+    const headers = await getAuthHeaders();
     const res = await fetch('/api/neo/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
 

@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile, Role } from '../types';
-import { db } from './firebase';
-import { doc, setDoc, getDocs, collection, query, where } from 'firebase/firestore';
+import { supabase, isSupabaseConfigured, mapUserRow } from './supabase';
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -15,114 +14,146 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+async function fetchProfileByAuthId(authId: string): Promise<UserProfile | null> {
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('auth_id', authId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn('[Supabase] Profile load notice:', error.message);
+    return null;
+  }
+
+  return data ? mapUserRow(data) : null;
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Restore active user session from localStorage
+  // Restore and listen to Supabase Auth session
   useEffect(() => {
-    const cached = localStorage.getItem('edutrain_active_user');
-    if (cached) {
-      try {
-        setUser(JSON.parse(cached));
-      } catch {
-        localStorage.removeItem('edutrain_active_user');
-        setUser(null);
+    let active = true;
+
+    const initSession = async () => {
+      if (!isSupabaseConfigured) {
+        if (active) setLoading(false);
+        return;
       }
-    }
-    setLoading(false);
+
+      try {
+        const { data } = await supabase.auth.getSession();
+        const authUser = data.session?.user;
+        if (authUser) {
+          const profile = await fetchProfileByAuthId(authUser.id);
+          if (active) setUser(profile);
+        } else if (active) {
+          setUser(null);
+        }
+      } catch (err) {
+        console.warn('[Supabase] Session init error:', err);
+        if (active) setUser(null);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    initSession();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return;
+      if (!session?.user) {
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
+      // Defer DB query out of the auth callback tick to prevent lock contention
+      const uid = session.user.id;
+      setTimeout(async () => {
+        const profile = await fetchProfileByAuthId(uid);
+        if (active) {
+          setUser(profile);
+          setLoading(false);
+        }
+      }, 0);
+    });
+
+    return () => {
+      active = false;
+      authListener.subscription.unsubscribe();
+    };
   }, []);
 
   const login = async (identifier: string, pass: string): Promise<{ success: boolean; error?: string }> => {
+    if (!isSupabaseConfigured) {
+      return {
+        success: false,
+        error: 'Configuration Supabase manquante (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).',
+      };
+    }
+
     const cleanId = identifier.trim().toLowerCase();
+    if (!cleanId || !pass) {
+      return { success: false, error: 'Identifiant et mot de passe requis.' };
+    }
 
-    // 1. Try server endpoint (skip if static host returns 404/405)
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: cleanId, password: pass }),
+      // 1. Resolve first name / full name / alias ("solene") / email into internal Auth email
+      const { data: resolvedEmail, error: resolveErr } = await supabase.rpc('resolve_login_email', {
+        p_identifier: cleanId,
       });
 
-      const contentType = response.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        const data = await response.json();
-        if (response.ok && data.success && data.user) {
-          setUser(data.user);
-          localStorage.setItem('edutrain_active_user', JSON.stringify(data.user));
-          return { success: true };
-        } else if (response.status === 400 || response.status === 401 || response.status === 403) {
-          return { success: false, error: data.error || 'Identifiant ou mot de passe incorrect.' };
-        }
+      if (resolveErr) {
+        console.warn('[Supabase] resolve_login_email error:', resolveErr.message);
       }
+
+      const emailToUse =
+        typeof resolvedEmail === 'string' && resolvedEmail.includes('@')
+          ? resolvedEmail
+          : cleanId.includes('@')
+          ? cleanId
+          : null;
+
+      if (!emailToUse) {
+        return {
+          success: false,
+          error: 'Identifiant introuvable. Veuillez vérifier ou créer un compte élève.',
+        };
+      }
+
+      // 2. Authenticate with Supabase Auth
+      const { data: authData, error: signInErr } = await supabase.auth.signInWithPassword({
+        email: emailToUse,
+        password: pass,
+      });
+
+      if (signInErr || !authData.user) {
+        return {
+          success: false,
+          error: 'Identifiant ou mot de passe incorrect.',
+        };
+      }
+
+      // 3. Load linked profile from public.users
+      const profile = await fetchProfileByAuthId(authData.user.id);
+      if (!profile) {
+        await supabase.auth.signOut();
+        return {
+          success: false,
+          error:
+            'Votre compte Auth est connecté mais le profil public.users n’est pas encore lié ou accessible. Vérifiez les droits SQL GRANT et la liaison auth_id dans Supabase.',
+        };
+      }
+
+      setUser(profile);
+      return { success: true };
     } catch (err) {
-      console.warn('API login network notice, attempting Firestore fallback...', err);
+      console.error('[Supabase] Login error:', err);
+      return { success: false, error: 'Erreur réseau lors de la connexion.' };
     }
-
-    // 2. Direct Firestore fallback (only if server was completely unreachable)
-    try {
-      // Check teacher
-      if (
-        cleanId === 'solene' ||
-        cleanId === 'solène' ||
-        cleanId === 'solene.depibrac' ||
-        cleanId === 'solene.depibrac@edutrain.fr'
-      ) {
-        if (pass === 'marinetpaul') {
-          const teacherUser: UserProfile = {
-            id: 'teacher-solene-depibrac',
-            firstName: 'Solène',
-            lastName: 'De Pibrac',
-            email: 'solene.depibrac@edutrain.fr',
-            role: 'teacher',
-            classId: 'class-cm2',
-            className: 'CM2',
-            createdAt: '2026-09-01T08:00:00.000Z',
-          };
-          setUser(teacherUser);
-          localStorage.setItem('edutrain_active_user', JSON.stringify(teacherUser));
-          return { success: true };
-        }
-        return { success: false, error: 'Mot de passe incorrect pour le compte enseignant.' };
-      }
-
-      // Check student in Firestore
-      const snap = await getDocs(query(collection(db, 'users'), where('role', '==', 'student')));
-      let foundStudent: UserProfile | null = null;
-      let matchedPassword = false;
-
-      snap.forEach((d) => {
-        const data = d.data();
-        const email = (data.email || '').toLowerCase();
-        const fullName = `${data.firstName || ''} ${data.lastName || ''}`.toLowerCase().trim();
-        const firstName = (data.firstName || '').toLowerCase();
-        if (email === cleanId || fullName === cleanId || firstName === cleanId) {
-          if (data.password && data.password === pass) {
-            matchedPassword = true;
-            foundStudent = {
-              id: d.id,
-              firstName: data.firstName,
-              lastName: data.lastName,
-              email: data.email,
-              role: 'student',
-              classId: data.classId || 'class-cm2',
-              className: data.className || 'CM2',
-              createdAt: data.createdAt || new Date().toISOString(),
-            };
-          }
-        }
-      });
-
-      if (foundStudent && matchedPassword) {
-        setUser(foundStudent);
-        localStorage.setItem('edutrain_active_user', JSON.stringify(foundStudent));
-        return { success: true };
-      }
-    } catch (fsErr) {
-      console.warn('Firestore fallback login notice:', fsErr);
-    }
-
-    return { success: false, error: 'Identifiant ou mot de passe incorrect.' };
   };
 
   const registerStudent = async (
@@ -130,97 +161,124 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     lastName: string,
     pass: string
   ): Promise<{ success: boolean; error?: string }> => {
-    if (!firstName.trim() || !lastName.trim()) {
+    if (!isSupabaseConfigured) {
+      return {
+        success: false,
+        error: 'Configuration Supabase manquante.',
+      };
+    }
+
+    const cleanFirst = firstName.trim();
+    const cleanLast = lastName.trim();
+
+    if (!cleanFirst || !cleanLast) {
       return { success: false, error: 'Veuillez saisir votre prénom et votre nom.' };
     }
     if (pass.length < 6) {
       return { success: false, error: 'Le mot de passe doit comporter au moins 6 caractères.' };
     }
 
-    const cleanFirst = firstName.trim();
-    const cleanLast = lastName.trim();
+    const sanitize = (s: string) =>
+      s
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]/g, '');
 
-    // 1. Post to Server API (skip if static host returns 404/405)
+    const email = `${sanitize(cleanFirst)}.${sanitize(cleanLast)}@cm2.edutrain.fr`;
+
     try {
-      const response = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          firstName: cleanFirst,
-          lastName: cleanLast,
-          password: pass,
-        }),
+      // 1. Check if this student already exists via resolve_login_email
+      const { data: existingEmail } = await supabase.rpc('resolve_login_email', {
+        p_identifier: email,
       });
-
-      const contentType = response.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        const data = await response.json();
-        if (response.ok && data.success && data.user) {
-          setUser(data.user);
-          localStorage.setItem('edutrain_active_user', JSON.stringify(data.user));
-          return { success: true };
-        } else if (response.status === 400 || response.status === 409) {
-          return {
-            success: false,
-            error: data.error || 'Erreur lors de la création du compte.',
-          };
-        }
-      }
-    } catch (apiErr) {
-      console.warn('Server registration offline/network error, checking Firestore fallback...', apiErr);
-    }
-
-    // 2. Fallback ONLY if the server API failed to respond / network offline / static host
-    try {
-      const sanitize = (s: string) =>
-        s
-          .toLowerCase()
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '')
-          .replace(/[^a-z0-9]/g, '');
-      const email = `${sanitize(cleanFirst)}.${sanitize(cleanLast)}@cm2.edutrain.fr`;
-      const cleanFullName = `${cleanFirst} ${cleanLast}`.toLowerCase();
-
-      // Check if already in Firestore to prevent duplicate
-      const snap = await getDocs(query(collection(db, 'users'), where('role', '==', 'student')));
-      let alreadyExists = false;
-      snap.forEach((d) => {
-        const data = d.data();
-        if (`${data.firstName || ''} ${data.lastName || ''}`.toLowerCase().trim() === cleanFullName) {
-          alreadyExists = true;
-        }
-      });
-
-      if (alreadyExists) {
+      if (existingEmail) {
         return {
           success: false,
           error: 'Un compte avec ce prénom et ce nom existe déjà. Veuillez vous connecter.',
         };
       }
 
-      const fallbackId = `student-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
-      const newStudentProfile: UserProfile = {
-        id: fallbackId,
-        firstName: cleanFirst,
-        lastName: cleanLast,
+      // 2. Create account in Supabase Auth (works directly in browser & GitHub Pages when Confirm email is OFF)
+      const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
         email,
-        role: 'student',
-        classId: 'class-cm2',
-        className: 'CM2',
-        createdAt: new Date().toISOString(),
-      };
-
-      await setDoc(doc(db, 'users', fallbackId), {
-        ...newStudentProfile,
-        fullName: `${cleanFirst} ${cleanLast}`,
         password: pass,
+        options: {
+          data: {
+            first_name: cleanFirst,
+            last_name: cleanLast,
+            role: 'student',
+          },
+        },
       });
 
-      setUser(newStudentProfile);
-      localStorage.setItem('edutrain_active_user', JSON.stringify(newStudentProfile));
+      if (signUpErr) {
+        if (signUpErr.message.toLowerCase().includes('already registered')) {
+          return {
+            success: false,
+            error: 'Un compte avec ce prénom et ce nom existe déjà. Veuillez vous connecter.',
+          };
+        }
+        return { success: false, error: signUpErr.message };
+      }
+
+      // If email confirmation is still enabled on Supabase, fall back to backend auto-confirm if available
+      if (!signUpData.session || !signUpData.user) {
+        try {
+          const res = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ firstName: cleanFirst, lastName: cleanLast, password: pass }),
+          });
+          const ct = res.headers.get('content-type') || '';
+          if (ct.includes('application/json')) {
+            const payload = await res.json();
+            if (res.ok && payload.success) {
+              return await login(email, pass);
+            }
+            if (payload.error) {
+              return { success: false, error: payload.error };
+            }
+          }
+        } catch {
+          // Static host without backend
+        }
+        return {
+          success: false,
+          error:
+            'Désactivez « Confirm email » dans Supabase (Authentication → Providers → Email) pour permettre l’inscription directe des élèves.',
+        };
+      }
+
+      // 3. Insert profile row into public.users (RLS verifies auth_id = auth.uid() AND role = 'student')
+      const studentId = `student-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+      const { data: insertedRow, error: insertErr } = await supabase
+        .from('users')
+        .insert({
+          id: studentId,
+          auth_id: signUpData.user.id,
+          first_name: cleanFirst,
+          last_name: cleanLast,
+          email,
+          role: 'student',
+          class_id: 'class-cm2',
+          class_name: 'CM2',
+        })
+        .select('*')
+        .single();
+
+      if (insertErr || !insertedRow) {
+        console.error('[Supabase] Profile insert error:', insertErr);
+        return {
+          success: false,
+          error: 'Compte créé, mais impossible d’enregistrer le profil élève dans la base.',
+        };
+      }
+
+      setUser(mapUserRow(insertedRow));
       return { success: true };
-    } catch (fsErr: any) {
-      console.error('Firestore direct registration error:', fsErr);
+    } catch (err) {
+      console.error('[Supabase] Registration error:', err);
       return { success: false, error: "Erreur réseau lors de l'inscription." };
     }
   };
@@ -231,37 +289,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
-      const response = await fetch('/api/auth/update-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user?.id, newPassword: newPass }),
-      });
-      const contentType = response.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        const data = await response.json();
-        if (response.ok && data.success) {
-          return { success: true };
-        }
+      const { error } = await supabase.auth.updateUser({ password: newPass });
+      if (error) {
+        return { success: false, error: error.message || 'Erreur lors de la mise à jour du mot de passe.' };
       }
-    } catch (err: any) {
-      console.warn('API update-password notice, using Firestore fallback:', err);
+      return { success: true };
+    } catch {
+      return { success: false, error: 'Erreur lors de la mise à jour du mot de passe.' };
     }
-
-    if (user?.id) {
-      try {
-        await setDoc(doc(db, 'users', user.id), { password: newPass }, { merge: true });
-        return { success: true };
-      } catch (fsErr) {
-        console.warn('Firestore updateUserPassword error:', fsErr);
-      }
-    }
-
-    return { success: false, error: 'Erreur lors de la mise à jour du mot de passe.' };
   };
 
   const logout = async () => {
-    localStorage.removeItem('edutrain_active_user');
-    setUser(null);
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      setUser(null);
+    }
   };
 
   return (

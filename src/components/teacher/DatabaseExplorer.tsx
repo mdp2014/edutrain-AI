@@ -1,26 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import {
-  collection,
-  getDocs,
-  setDoc,
-  doc,
-  deleteDoc,
-} from 'firebase/firestore';
-import { db, auth } from '../../lib/firebase';
-import {
-  DEMO_TEACHER,
-  DEMO_CLASS,
-  INITIAL_EXERCISES,
-} from '../../lib/demoData';
+import { supabase, supabaseProjectRef } from '../../lib/supabase';
 import { clearDatabasePreservingTeacher } from '../../lib/dataService';
-import firebaseConfig from '../../../firebase-applet-config.json';
 import {
   Database,
   ExternalLink,
   RefreshCw,
-  UploadCloud,
   CheckCircle2,
-  FileJson,
   Layers,
   Users,
   BookOpen,
@@ -35,19 +20,21 @@ import {
 } from 'lucide-react';
 
 export const DatabaseExplorer: React.FC = () => {
-  const [activeCollection, setActiveCollection] = useState<string>('users');
-  const [documents, setDocuments] = useState<any[]>([]);
+  const [activeTable, setActiveTable] = useState<string>('users');
+  const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [selectedDoc, setSelectedDoc] = useState<any | null>(null);
+  const [selectedRow, setSelectedRow] = useState<any | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
-  const consoleUrl = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${firebaseConfig.firestoreDatabaseId}/data`;
+  const consoleUrl = supabaseProjectRef
+    ? `https://supabase.com/dashboard/project/${supabaseProjectRef}/editor`
+    : 'https://supabase.com/dashboard';
 
-  const collections = [
-    { id: 'users', label: 'Utilisateurs (users)', icon: Users, desc: 'Enseignante Solène (conservée)' },
+  const tables = [
+    { id: 'users', label: 'Utilisateurs (users)', icon: Users, desc: 'Enseignante Solène & élèves CM2' },
     { id: 'attempts', label: 'Tentatives (attempts)', icon: History, desc: 'Réponses des élèves' },
     { id: 'progress', label: 'Progression (progress)', icon: TrendingUp, desc: 'Scores par compétence' },
     { id: 'reports', label: 'Rapports (reports)', icon: FileText, desc: 'Rapports pédagogiques Gemini' },
@@ -55,51 +42,30 @@ export const DatabaseExplorer: React.FC = () => {
     { id: 'exercises', label: 'Exercices (exercises)', icon: BookOpen, desc: 'Exercices CM2 générés & adaptés' },
   ];
 
-  const fetchCollectionDocs = async (colName: string) => {
+  const fetchTableRows = async (tableName: string) => {
     setLoading(true);
-    setSelectedDoc(null);
+    setSelectedRow(null);
+    setSyncError(null);
     try {
-      const snap = await getDocs(collection(db, colName));
-      const list: any[] = [];
-      snap.forEach((d) => {
-        list.push({ _id: d.id, ...d.data() });
-      });
-      // If collection is users and list from firestore is empty, try server API
-      if (colName === 'users' && list.length === 0) {
-        list.push(DEMO_TEACHER);
-      }
-      setDocuments(list);
-    } catch (err: any) {
-      console.warn('Could not read from Firestore directly, querying API fallback:', err);
-      if (colName === 'users') {
-        try {
-          const res = await fetch('/api/students');
-          const data = await res.json();
-          setDocuments([DEMO_TEACHER, ...(data.students || [])]);
-        } catch {
-          setDocuments([DEMO_TEACHER]);
-        }
-      } else if (colName === 'reports') {
-        try {
-          const res = await fetch('/api/reports');
-          const data = await res.json();
-          setDocuments(data.reports || []);
-        } catch {
-          setDocuments([]);
-        }
+      const { data, error } = await supabase.from(tableName).select('*').limit(200);
+      if (error) {
+        setSyncError(`Erreur Supabase sur la table ${tableName} : ${error.message}`);
+        setRows([]);
       } else {
-        setDocuments([]);
+        setRows(data || []);
       }
+    } catch (err: any) {
+      setSyncError(err?.message || 'Erreur lors de la lecture de la table Supabase.');
+      setRows([]);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchCollectionDocs(activeCollection);
-  }, [activeCollection]);
+    fetchTableRows(activeTable);
+  }, [activeTable]);
 
-  // Vider les données en conservant uniquement l'enseignant
   const handleClearDatabase = async () => {
     setLoading(true);
     setSyncStatus(null);
@@ -109,7 +75,7 @@ export const DatabaseExplorer: React.FC = () => {
       if (res.success) {
         setSyncStatus('Base de données vidée avec succès ! Seul le compte enseignant est conservé.');
         setConfirmClear(false);
-        await fetchCollectionDocs(activeCollection);
+        await fetchTableRows(activeTable);
       } else {
         setSyncError(res.error || 'Erreur lors du vidage de la base.');
       }
@@ -121,35 +87,37 @@ export const DatabaseExplorer: React.FC = () => {
   };
 
   const handleCopyJson = () => {
-    navigator.clipboard.writeText(JSON.stringify(documents, null, 2));
+    navigator.clipboard.writeText(JSON.stringify(rows, null, 2));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   return (
     <div className="space-y-6">
-      {/* Top Banner: Direct Access to Firebase Console */}
-      <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-xl border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+      {/* Top Banner: Direct Access to Supabase Dashboard */}
+      <div className="bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-xl border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-bold border border-indigo-500/30 mb-3">
-            <Database className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Google Cloud Firestore</span>
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-500/30 mb-3">
+            <Database className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Supabase PostgreSQL • RLS Actif</span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
             Accès Direct à la Base de Données
           </h2>
           <p className="text-slate-300 text-xs sm:text-sm mt-1 max-w-xl">
-            Votre base Firestore est active et hébergée sur Google Cloud. Vous pouvez l'explorer ici ou l'ouvrir directement dans la Console Firebase officielle.
+            Votre base PostgreSQL Supabase est active et protégée par Row Level Security. Vous pouvez explorer les tables ici ou ouvrir directement votre tableau de bord Supabase.
           </p>
 
-          <div className="mt-4 flex flex-wrap gap-2 text-xs">
-            <span className="bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700 font-mono text-slate-300">
-              Projet : <strong className="text-white">{firebaseConfig.projectId}</strong>
-            </span>
-            <span className="bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700 font-mono text-slate-300">
-              Database : <strong className="text-white">{firebaseConfig.firestoreDatabaseId}</strong>
-            </span>
-          </div>
+          {supabaseProjectRef && (
+            <div className="mt-4 flex flex-wrap gap-2 text-xs">
+              <span className="bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700 font-mono text-slate-300">
+                Projet Supabase : <strong className="text-white">{supabaseProjectRef}</strong>
+              </span>
+              <span className="bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700 font-mono text-slate-300">
+                Schéma : <strong className="text-white">public</strong>
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
@@ -157,9 +125,9 @@ export const DatabaseExplorer: React.FC = () => {
             href={consoleUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="px-5 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition cursor-pointer"
+            className="px-5 py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-2xl text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition cursor-pointer"
           >
-            <span>Ouvrir Console Firebase</span>
+            <span>Ouvrir Supabase</span>
             <ExternalLink className="w-4 h-4" />
           </a>
 
@@ -209,62 +177,62 @@ export const DatabaseExplorer: React.FC = () => {
 
       {/* Explorer Content */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Collections List Sidebar */}
+        {/* Tables List Sidebar */}
         <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-xs space-y-2">
           <h3 className="text-xs font-extrabold text-slate-400 uppercase tracking-wider px-2 mb-3">
-            Collections Firestore
+            Tables Supabase
           </h3>
 
-          {collections.map((col) => {
-            const Icon = col.icon;
-            const isSelected = activeCollection === col.id;
+          {tables.map((tbl) => {
+            const Icon = tbl.icon;
+            const isSelected = activeTable === tbl.id;
 
             return (
               <button
-                key={col.id}
-                onClick={() => setActiveCollection(col.id)}
+                key={tbl.id}
+                onClick={() => setActiveTable(tbl.id)}
                 className={`w-full text-left p-3.5 rounded-2xl transition cursor-pointer flex items-start gap-3 ${
                   isSelected
-                    ? 'bg-indigo-50 border-2 border-indigo-600 text-indigo-900 shadow-xs'
+                    ? 'bg-emerald-50 border-2 border-emerald-600 text-emerald-950 shadow-xs'
                     : 'hover:bg-slate-50 border-2 border-transparent text-slate-700'
                 }`}
               >
                 <div
                   className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
-                    isSelected ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'
+                    isSelected ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
                   }`}
                 >
                   <Icon className="w-4 h-4" />
                 </div>
                 <div>
-                  <div className="font-bold text-xs sm:text-sm leading-tight">{col.label}</div>
-                  <div className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">{col.desc}</div>
+                  <div className="font-bold text-xs sm:text-sm leading-tight">{tbl.label}</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">{tbl.desc}</div>
                 </div>
               </button>
             );
           })}
         </div>
 
-        {/* Collection Documents View */}
+        {/* Table Rows View */}
         <div className="lg:col-span-3 bg-white rounded-3xl p-6 border border-slate-200 shadow-xs flex flex-col justify-between">
           <div>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4 mb-4">
               <div>
                 <h3 className="text-lg font-extrabold text-slate-800 flex items-center gap-2">
-                  <span>Collection :</span>
-                  <code className="text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-lg text-sm font-mono">
-                    /{activeCollection}
+                  <span>Table :</span>
+                  <code className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg text-sm font-mono">
+                    public.{activeTable}
                   </code>
                 </h3>
                 <span className="text-xs text-slate-400">
-                  {documents.length} document{documents.length > 1 ? 's' : ''} disponible{documents.length > 1 ? 's' : ''}
+                  {rows.length} ligne{rows.length > 1 ? 's' : ''} chargée{rows.length > 1 ? 's' : ''}
                 </span>
               </div>
 
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => fetchCollectionDocs(activeCollection)}
-                  className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-xl transition cursor-pointer text-xs flex items-center gap-1 font-semibold"
+                  onClick={() => fetchTableRows(activeTable)}
+                  className="p-2 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-xl transition cursor-pointer text-xs flex items-center gap-1 font-semibold"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
                   <span>Actualiser</span>
@@ -272,7 +240,7 @@ export const DatabaseExplorer: React.FC = () => {
 
                 <button
                   onClick={handleCopyJson}
-                  className="p-2 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-xl transition cursor-pointer text-xs flex items-center gap-1 font-semibold"
+                  className="p-2 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-xl transition cursor-pointer text-xs flex items-center gap-1 font-semibold"
                 >
                   {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
                   <span>{copied ? 'Copié !' : 'Copier JSON'}</span>
@@ -280,35 +248,40 @@ export const DatabaseExplorer: React.FC = () => {
               </div>
             </div>
 
-            {/* Documents List */}
             {loading ? (
               <div className="py-12 text-center text-slate-400 text-xs">
-                Chargement des données Firestore...
+                Chargement des données Supabase...
               </div>
-            ) : documents.length === 0 ? (
+            ) : rows.length === 0 ? (
               <div className="py-12 text-center text-slate-400 text-xs">
-                Aucun document trouvé dans cette collection. Cliquez sur "Pousser les données" pour initialiser.
+                Aucune ligne trouvée dans cette table.
               </div>
             ) : (
               <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-                {documents.map((item, idx) => {
-                  const docId = item.id || item._id || `doc-${idx}`;
-                  const title = item.fullName || item.name || item.question || item.studentName || item.skill || docId;
-                  const isSelected = selectedDoc === item;
+                {rows.map((item, idx) => {
+                  const rowId = item.id || `row-${idx}`;
+                  const title =
+                    item.full_name ||
+                    item.name ||
+                    item.question ||
+                    item.student_name ||
+                    item.skill ||
+                    rowId;
+                  const isSelected = selectedRow === item;
 
                   return (
                     <div
-                      key={docId}
+                      key={rowId}
                       className={`p-4 rounded-2xl border transition ${
                         isSelected
-                          ? 'border-indigo-500 bg-indigo-50/30'
+                          ? 'border-emerald-500 bg-emerald-50/30'
                           : 'border-slate-200 bg-slate-50/50 hover:bg-slate-50'
                       }`}
                     >
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
                           <code className="text-[11px] font-mono font-bold text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200">
-                            ID: {docId}
+                            ID: {rowId}
                           </code>
                           {item.role && (
                             <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
@@ -320,20 +293,20 @@ export const DatabaseExplorer: React.FC = () => {
                               {item.difficulty}
                             </span>
                           )}
-                          {item.isCorrect !== undefined && (
+                          {item.is_correct !== undefined && (
                             <span
                               className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                                item.isCorrect ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                                item.is_correct ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
                               }`}
                             >
-                              {item.isCorrect ? 'Réussi' : 'Erreur'}
+                              {item.is_correct ? 'Réussi' : 'Erreur'}
                             </span>
                           )}
                         </div>
 
                         <button
-                          onClick={() => setSelectedDoc(isSelected ? null : item)}
-                          className="text-xs text-indigo-600 font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                          onClick={() => setSelectedRow(isSelected ? null : item)}
+                          className="text-xs text-emerald-700 font-bold hover:underline flex items-center gap-1 cursor-pointer"
                         >
                           <Eye className="w-3.5 h-3.5" />
                           <span>{isSelected ? 'Masquer JSON' : 'Voir JSON'}</span>
@@ -344,7 +317,6 @@ export const DatabaseExplorer: React.FC = () => {
                         {title}
                       </div>
 
-                      {/* Expanded JSON view */}
                       {isSelected && (
                         <pre className="mt-3 p-3.5 bg-slate-900 text-emerald-400 rounded-xl text-[11px] font-mono overflow-x-auto">
                           {JSON.stringify(item, null, 2)}
