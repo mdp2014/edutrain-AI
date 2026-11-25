@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.25s ease-out forwards;
+}
+
+/* -------------------------------------------
+   NÉO MASCOT ANIMATIONS
+   Lightweight, performant CSS animations
+   ------------------------------------------- */
+
+@keyframes neoFloat {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes neoJoyBounce {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  30% {
+    transform: translateY(-10px) scale(1.05) rotate(-2deg);
+  }
+  60% {
+    transform: translateY(-2px) scale(0.98) rotate(2deg);
+  }
+}
+
+@keyframes neoThinkingTilt {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(-4deg) translateY(-2px);
+  }
+}
+
+@keyframes neoPulseGlow {
+  0%, 100% {
+    filter: drop-shadow(0 0 3px rgba(250, 204, 21, 0.4));
+  }
+  50% {
+    filter: drop-shadow(0 0 8px rgba(250, 204, 21, 0.8));
+  }
+}
+
+@keyframes neoStarRotate {
+  0% {
+    transform: scale(0.7) rotate(0deg);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.2) rotate(180deg);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.7) rotate(360deg);
+    opacity: 0.7;
+  }
+}
+
+@keyframes neoEyeBlink {
+  0%, 94%, 98%, 100% {
+    transform: scaleY(1);
+  }
+  96% {
+    transform: scaleY(0.1);
+  }
+}
+
+@keyframes neoSpeechPulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.03);
+  }
+}
+
+.neo-floating {
+  animation: neoFloat 3.2s ease-in-out infinite;
+}
+
+.neo-celebrating-anim {
+  animation: neoJoyBounce 1.4s ease-in-out infinite;
+}
+
+.neo-thinking-anim {
+  animation: neoThinkingTilt 2.8s ease-in-out infinite;
+}
+
+.neo-glow {
+  animation: neoPulseGlow 2.4s ease-in-out infinite;
+}
+
+.neo-star-spin {
+  animation: neoStarRotate 2.6s linear infinite;
+  transform-origin: center;
+}
+
+.neo-blink-anim {
+  animation: neoEyeBlink 4.5s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.neo-speech-bounce {
+  animation: neoSpeechPulse 2s ease-in-out infinite;
+}
+
