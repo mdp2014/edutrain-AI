@@ -36,7 +36,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (identifier: string, pass: string): Promise<{ success: boolean; error?: string }> => {
     const cleanId = identifier.trim().toLowerCase();
 
-    // 1. Try server endpoint
+    // 1. Try server endpoint (skip if static host returns 404/405)
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
@@ -44,14 +44,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body: JSON.stringify({ identifier: cleanId, password: pass }),
       });
 
-      const data = await response.json();
-      if (response.ok && data.success && data.user) {
-        setUser(data.user);
-        localStorage.setItem('edutrain_active_user', JSON.stringify(data.user));
-        return { success: true };
-      } else {
-        // If the server answered, return its validation message immediately
-        return { success: false, error: data.error || 'Identifiant ou mot de passe incorrect.' };
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await response.json();
+        if (response.ok && data.success && data.user) {
+          setUser(data.user);
+          localStorage.setItem('edutrain_active_user', JSON.stringify(data.user));
+          return { success: true };
+        } else if (response.status === 400 || response.status === 401 || response.status === 403) {
+          return { success: false, error: data.error || 'Identifiant ou mot de passe incorrect.' };
+        }
       }
     } catch (err) {
       console.warn('API login network notice, attempting Firestore fallback...', err);
@@ -138,7 +140,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanFirst = firstName.trim();
     const cleanLast = lastName.trim();
 
-    // 1. Post to Server API (single authoritative creation)
+    // 1. Post to Server API (skip if static host returns 404/405)
     try {
       const response = await fetch('/api/auth/register', {
         method: 'POST',
@@ -150,22 +152,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }),
       });
 
-      const data = await response.json();
-      if (response.ok && data.success && data.user) {
-        setUser(data.user);
-        localStorage.setItem('edutrain_active_user', JSON.stringify(data.user));
-        return { success: true };
-      } else {
-        return {
-          success: false,
-          error: data.error || 'Erreur lors de la création du compte.',
-        };
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await response.json();
+        if (response.ok && data.success && data.user) {
+          setUser(data.user);
+          localStorage.setItem('edutrain_active_user', JSON.stringify(data.user));
+          return { success: true };
+        } else if (response.status === 400 || response.status === 409) {
+          return {
+            success: false,
+            error: data.error || 'Erreur lors de la création du compte.',
+          };
+        }
       }
     } catch (apiErr) {
       console.warn('Server registration offline/network error, checking Firestore fallback...', apiErr);
     }
 
-    // 2. Fallback ONLY if the server API failed to respond / network offline
+    // 2. Fallback ONLY if the server API failed to respond / network offline / static host
     try {
       const sanitize = (s: string) =>
         s
@@ -231,14 +236,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: user?.id, newPassword: newPass }),
       });
-      const data = await response.json();
-      if (response.ok && data.success) {
-        return { success: true };
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await response.json();
+        if (response.ok && data.success) {
+          return { success: true };
+        }
       }
-      return { success: false, error: data.error || 'Erreur de mise à jour' };
     } catch (err: any) {
-      return { success: false, error: 'Erreur réseau.' };
+      console.warn('API update-password notice, using Firestore fallback:', err);
     }
+
+    if (user?.id) {
+      try {
+        await setDoc(doc(db, 'users', user.id), { password: newPass }, { merge: true });
+        return { success: true };
+      } catch (fsErr) {
+        console.warn('Firestore updateUserPassword error:', fsErr);
+      }
+    }
+
+    return { success: false, error: 'Erreur lors de la mise à jour du mot de passe.' };
   };
 
   const logout = async () => {

@@ -37,12 +37,53 @@ export async function askNeo(payload: NeoContextPayload): Promise<NeoApiResponse
       hintLevel: data.hintLevel,
     };
   } catch (error) {
-    console.warn('askNeo call failed:', error);
+    console.warn('askNeo call failed, using smart contextual Socratic fallback:', error);
+    const studentName = payload.studentName || 'champion';
+    const ctx = payload.exerciseContext;
+    const level = payload.hintLevel || 1;
+    const skill = ctx?.skill || 'cette notion';
+    const question = ctx?.question || '';
+    const explanation = ctx?.explanation || '';
+
+    let reply = `Coucou ${studentName} ! 🤖 `;
+    let emotion: NeoEmotionState = 'neo-encouraging';
+    let suggestedFollowUps = ['Donne-moi un autre indice', 'Je réessaie !'];
+
+    if (!ctx || !question) {
+      reply += "Je suis prêt à t'accompagner ! Lance une série d'exercices et clique sur moi dès que tu veux un coup de pouce ! 💡";
+      emotion = 'neo-happy';
+      suggestedFollowUps = ['Comment fonctionnent les indices ?', 'Merci Néo !'];
+    } else if (level === 1) {
+      reply += `Indice 1 💡 : Lis bien la question en repérant les mots-clés ou les nombres importants dans « ${question.slice(0, 65)}${question.length > 65 ? '...' : ''} ». Que cherche-t-on exactement ?`;
+      emotion = 'neo-thinking';
+      suggestedFollowUps = ['Indice niveau 2 (Question guidée)', 'J’ai compris !'];
+    } else if (level === 2) {
+      reply += `Indice 2 🧭 : Pour réussir en ${skill}, demande-toi quelle est la toute première opération ou règle à appliquer avant de conclure.`;
+      emotion = 'neo-thinking';
+      suggestedFollowUps = ['Indice niveau 3 (Méthode)', 'Je vais essayer !'];
+    } else if (level === 3) {
+      const methodHint = explanation
+        ? explanation.split('.')[0] + '.'
+        : `Décompose le problème de ${skill} étape par étape en vérifiant bien chaque donnée de l'énoncé.`;
+      reply += `Indice 3 📘 (Méthode) : Voici une piste précieuse sans te donner la réponse finale : ${methodHint}`;
+      emotion = 'neo-encouraging';
+      suggestedFollowUps = ['Indice niveau 4 (Déblocage pas à pas)', 'Je tente ma réponse !'];
+    } else {
+      reply += `Indice 4 🚀 (Déblocage) : Tu y es presque ! ${
+        explanation
+          ? `Rappelle-toi : ${explanation.slice(0, 110)}${explanation.length > 110 ? '...' : ''}`
+          : 'Utilise les éléments de la question pour vérifier ton résultat final.'
+      } À toi de conclure !`;
+      emotion = 'neo-celebrating';
+      suggestedFollowUps = ['Merci Néo, je valide !'];
+    }
+
     return {
-      success: false,
-      reply: "Bip bip ! 🤖 Néo réfléchit... Relis bien la consigne et avance pas à pas !",
-      emotion: 'neo-encouraging',
-      suggestedFollowUps: ['Donne-moi un indice', 'Je continue'],
+      success: true,
+      reply,
+      emotion,
+      suggestedFollowUps,
+      hintLevel: level,
     };
   }
 }

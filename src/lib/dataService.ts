@@ -131,20 +131,74 @@ export async function getStudentProgress(studentId: string): Promise<StudentProg
  * Record a new attempt in both the server and Firestore
  */
 export async function recordAttempt(attempt: Attempt): Promise<void> {
+  let serverSaved = false;
   try {
-    await fetch('/api/attempts', {
+    const res = await fetch('/api/attempts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(attempt),
     });
+    if (res.ok) {
+      serverSaved = true;
+    }
   } catch (error) {
     console.warn('API recordAttempt error:', error);
   }
 
   try {
     await setDoc(doc(db, 'attempts', attempt.id), attempt);
+
+    // If the server endpoint wasn't available (e.g. GitHub Pages static deployment),
+    // compute and update the student's skill progress document directly in Firestore.
+    if (!serverSaved) {
+      const snap = await getDocs(
+        query(collection(db, 'attempts'), where('studentId', '==', attempt.studentId))
+      );
+      const skillAttempts: Attempt[] = [];
+      snap.forEach((d) => {
+        const data = d.data() as Attempt;
+        if (data.skill === attempt.skill && data.subject === attempt.subject) {
+          skillAttempts.push(data);
+        }
+      });
+
+      if (!skillAttempts.some((a) => a.id === attempt.id)) {
+        skillAttempts.push(attempt);
+      }
+
+      const total = skillAttempts.length;
+      const correct = skillAttempts.filter((a) => a.isCorrect).length;
+      const score = total > 0 ? Math.round((correct / total) * 100) : 0;
+
+      const sortedRecent = [...skillAttempts].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      const recentThree = sortedRecent.slice(0, 3);
+      let level: Difficulty = 'moyen';
+      if (recentThree.length >= 3 && recentThree.every((a) => a.isCorrect)) {
+        level = score > 85 ? 'difficile' : 'moyen';
+      } else if (recentThree.length >= 2 && recentThree.slice(0, 2).every((a) => !a.isCorrect)) {
+        level = 'facile';
+      } else {
+        level = score >= 75 ? 'moyen' : 'facile';
+      }
+
+      const progId = `prog-${attempt.studentId}-${attempt.skill.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+      const updatedProg: StudentProgress = {
+        id: progId,
+        studentId: attempt.studentId,
+        subject: attempt.subject,
+        skill: attempt.skill,
+        score,
+        totalAttempts: total,
+        correctAttempts: correct,
+        level,
+        updatedAt: new Date().toISOString(),
+      };
+      await setDoc(doc(db, 'progress', progId), updatedProg);
+    }
   } catch (e) {
-    console.warn('Firestore attempt write error:', e);
+    console.warn('Firestore attempt/progress write error:', e);
   }
 }
 
@@ -270,35 +324,117 @@ export async function callGeminiGenerateReport(params: {
   recentAttempts: Attempt[];
   recentErrors: Attempt[];
 }): Promise<TeacherReport> {
-  const response = await fetch('/api/generate-report', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  });
+  try {
+    const response = await fetch('/api/generate-report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.message || 'Échec de la génération du rapport');
+    if (response.ok) {
+      const data = await response.json();
+      if (data.report) {
+        return data.report;
+      }
+    }
+  } catch (err) {
+    console.warn('API generate-report fallback:', err);
   }
 
-  const data = await response.json();
-  return data.report;
+  // Client-side pedagogical diagnostic fallback when static host has no backend
+  const skillEntries = Object.entries(params.skills || {});
+  const masteredPoints = skillEntries
+    .filter(([_, sc]) => sc >= 75)
+    .map(([sk, sc]) => `${sk} : compétence acquise avec ${sc} % de réussite.`);
+  const difficulties = skillEntries
+    .filter(([_, sc]) => sc < 75)
+    .map(([sk, sc]) => `${sk} : notion en cours d'acquisition (${sc} % de réussite), nécessite un renforcement.`);
+
+  const frequentErrors =
+    params.recentErrors.length > 0
+      ? params.recentErrors
+          .slice(0, 3)
+          .map((e) => `Erreur en ${e.skill} sur « ${e.question.slice(0, 60)}... » (réponse donnée : ${e.answer})`)
+      : ['Aucune erreur récurrente constatée lors des dernières évaluations.'];
+
+  const fallbackReport: TeacherReport = {
+    id: `rep-${Date.now()}`,
+    studentId: params.studentId,
+    studentName: params.studentName,
+    teacherId: 'teacher-solene-depibrac',
+    summary: `${params.studentName} a réalisé ${params.totalExercises} exercice(s) avec un taux de réussite global de ${params.overallScore} %. ${
+      params.overallScore >= 75
+        ? "Le profil montre une très bonne maîtrise des attendus de CM2."
+        : "Des séances régulières de consolidation permettront de stabiliser les notions fragiles."
+    }`,
+    masteredPoints:
+      masteredPoints.length > 0
+        ? masteredPoints
+        : ["Participation active aux premières séances d'évaluation diagnostique."],
+    difficulties:
+      difficulties.length > 0
+        ? difficulties
+        : ["Aucune difficulté majeure constatée sur les notions évaluées."],
+    frequentErrors,
+    recommendations:
+      difficulties.length > 0
+        ? [
+            "Proposer des séries courtes de remédiation guidée avec manipulation ou schéma.",
+            "Encourager l'utilisation des indices progressifs de Néo avant de valider.",
+          ]
+        : [
+            "Poursuivre avec des défis d'approfondissement de fin de CM2 / début 6e.",
+            "Varier les problèmes à étapes pour entretenir le raisonnement logique.",
+          ],
+    nextSteps: [
+      "Poursuivre l'entraînement adaptatif quotidien de 5 questions.",
+      "Vérifier la stabilité des acquis lors de la prochaine séance.",
+    ],
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    await setDoc(doc(db, 'reports', fallbackReport.id), fallbackReport);
+  } catch (fsErr) {
+    console.warn('Firestore save fallback report error:', fsErr);
+  }
+
+  return fallbackReport;
 }
 
 /**
  * Get all generated reports for the teacher
  */
 export async function getTeacherReports(): Promise<TeacherReport[]> {
+  const reportsMap = new Map<string, TeacherReport>();
+
   try {
     const res = await fetch('/api/reports');
     if (res.ok) {
       const data = await res.json();
-      return data.reports || [];
+      if (Array.isArray(data.reports)) {
+        data.reports.forEach((r: TeacherReport) => reportsMap.set(r.id, r));
+      }
     }
   } catch (error) {
-    console.error('Error fetching reports:', error);
+    console.warn('API reports fetch notice:', error);
   }
-  return [];
+
+  try {
+    const snap = await getDocs(collection(db, 'reports'));
+    snap.forEach((docSnap) => {
+      const data = docSnap.data() as TeacherReport;
+      if (!reportsMap.has(docSnap.id)) {
+        reportsMap.set(docSnap.id, { ...data, id: docSnap.id });
+      }
+    });
+  } catch (fsErr) {
+    console.warn('Firestore reports fetch notice:', fsErr);
+  }
+
+  return Array.from(reportsMap.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
 }
 
 /**
